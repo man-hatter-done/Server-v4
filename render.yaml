@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: terminal-server
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard
+    scaling:
+      minInstances: 1
+      maxInstances: 1
+    envVars:
+      - key: API_KEY
+        sync: false
+      - key: SESSION_TIMEOUT
+        value: 3600000
+      - key: MAX_CONTAINERS
+        value: 100
+      - key: CONTAINER_MEMORY
+        value: 256m
+      - key: CONTAINER_CPU
+        value: 0.5
+      - key: USER_CONTAINER_IMAGE
+        value: terminal-user-image:latest
+      - key: PORT
+        value: 3000
+    disk:
+      name: terminal-logs
+      mountPath: /app/logs
+      sizeGB: 1

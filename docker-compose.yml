@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  terminal-server:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - API_KEY=change-this-in-production
+      - SESSION_TIMEOUT=3600000
+      - MAX_CONTAINERS=100
+      - CONTAINER_MEMORY=256m
+      - CONTAINER_CPU=0.5
+      - USER_CONTAINER_IMAGE=terminal-user-image:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  # This service is just to build and store the user container image
+  # It doesn't need to run
+  terminal-user-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.user
+    image: terminal-user-image:latest
+    # Don't actually run this container
+    entrypoint: ["echo", "User container image built successfully"]
+    profiles:
+      - build-only

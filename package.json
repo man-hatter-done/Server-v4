@@ -1,11 +1,17 @@
 {
-  "name": "shell-command-server",
+  "name": "terminal-server",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build-images": "docker build -t terminal-server -f Dockerfile . && docker build -t terminal-user-image -f Dockerfile.user ."
   },
   "dependencies": {
-    "express": "^4.17.1"
+    "dockerode": "^3.3.5",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "uuid": "^9.0.1"
   }
 }
