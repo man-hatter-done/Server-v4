@@ -14,12 +14,8 @@ services:
       - key: CONTAINER_MEMORY
         value: 256m  # Fits within 512 MB limit
       - key: CONTAINER_CPU
-        value: 0.1  # Adjusted to match free tier's 0.1 vCPU
+        value: 0.1  # Matches free tier's 0.1 vCPU
       - key: USER_CONTAINER_IMAGE
         value: terminal-user-image:latest
       - key: PORT
         value: 3000
-    disk:
-      name: terminal-logs
-      mountPath: /app/logs
-      sizeGB: 1
