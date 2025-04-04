@@ -6,7 +6,7 @@ services:
     plan: standard
     scaling:
       minInstances: 1
-      maxInstances: 1
+      maxInstances: 2
     envVars:
       - key: API_KEY
         sync: false
@@ -17,7 +17,7 @@ services:
       - key: CONTAINER_MEMORY
         value: 256m
       - key: CONTAINER_CPU
-        value: 0.5
+        value: 1
       - key: USER_CONTAINER_IMAGE
         value: terminal-user-image:latest
       - key: PORT
