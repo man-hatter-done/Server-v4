@@ -3,11 +3,7 @@ services:
     name: terminal-server
     env: docker
     dockerfilePath: ./Dockerfile
-    plan: standard
-    scaling:
-      minInstances: 1
-      maxInstances: 2
-      targetCPUPercent: 70  # Added: Scale based on 70% CPU utilization
+    plan: free  # Explicitly set to free tier
     envVars:
       - key: API_KEY
         sync: false
@@ -16,9 +12,9 @@ services:
       - key: MAX_CONTAINERS
         value: 100
       - key: CONTAINER_MEMORY
-        value: 256m
+        value: 256m  # Fits within 512 MB limit
       - key: CONTAINER_CPU
-        value: 0.5
+        value: 0.1  # Adjusted to match free tier's 0.1 vCPU
       - key: USER_CONTAINER_IMAGE
         value: terminal-user-image:latest
       - key: PORT
