@@ -7,6 +7,7 @@ services:
     scaling:
       minInstances: 1
       maxInstances: 2
+      targetCPUPercent: 70  # Added: Scale based on 70% CPU utilization
     envVars:
       - key: API_KEY
         sync: false
@@ -17,7 +18,7 @@ services:
       - key: CONTAINER_MEMORY
         value: 256m
       - key: CONTAINER_CPU
-        value: 1
+        value: 0.5
       - key: USER_CONTAINER_IMAGE
         value: terminal-user-image:latest
       - key: PORT
