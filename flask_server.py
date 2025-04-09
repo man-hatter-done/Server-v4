@@ -70,6 +70,13 @@ socket_processes = {}
 import eventlet
 eventlet.monkey_patch()
 
+# Debug WebSocket connection issues
+print("WebSocket support enabled with eventlet")
+print(f"Current eventlet version: {eventlet.__version__}")
+
+# Register file management API endpoints
+register_file_management_endpoints(app, get_session)
+
 # WebSocket event handlers
 @socketio.on('connect')
 def handle_connect():

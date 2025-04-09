@@ -112,7 +112,7 @@ function initializeSocket() {
             
             // Connect to Socket.IO server
             socket = io(window.location.origin, {
-                transports: ['websocket'],
+                transports: ['websocket', 'polling'],  // Allow fallback to polling if websocket fails
                 reconnection: true,
                 reconnectionAttempts: 5,
                 reconnectionDelay: 1000,
