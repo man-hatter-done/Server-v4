@@ -15,11 +15,11 @@ from flask_cors import CORS
 from flask_compress import Compress
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
-import cachetools.func
 import select
 import io
 import eventlet
 from file_management import register_file_management_endpoints
+from cache_utils import cached_response, file_content_cache
 
 # Use eventlet for WebSocket support
 eventlet.monkey_patch()
