@@ -104,7 +104,7 @@ def get_session(session_id):
 @app.route('/')
 def index():
     """Serve web terminal interface"""
-    return send_file('static/index-v2.html')
+    return send_file('static/simple-terminal.html')
 
 
 @app.route('/static/<path:path>')

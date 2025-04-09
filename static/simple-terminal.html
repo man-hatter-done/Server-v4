@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple iOS Terminal</title>
+    <style>
+        body {
+            font-family: monospace;
+            margin: 0;
+            padding: 20px;
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #4CAF50;
+            margin-bottom: 20px;
+        }
+        
+        .terminal {
+            background-color: #121212;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid #333;
+            height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        
+        .input-area {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        
+        .prompt {
+            color: #4CAF50;
+            margin-right: 10px;
+            line-height: 30px;
+            font-weight: bold;
+        }
+        
+        #command-input {
+            flex: 1;
+            background-color: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 3px;
+            color: #f0f0f0;
+            padding: 5px 10px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            text-align: center;
+            margin-top: 10px;
+            color: #999;
+        }
+        
+        .command-output {
+            margin: 10px 0;
+        }
+        
+        .command-text {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        
+        .error-text {
+            color: #e74c3c;
+        }
+        
+        .system-text {
+            color: #3498db;
+            font-style: italic;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 10px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>iOS Terminal Tester</h1>
+        
+        <div id="terminal" class="terminal"></div>
+        
+        <div class="input-area">
+            <span class="prompt">$</span>
+            <input type="text" id="command-input" placeholder="Enter command..." autofocus>
+        </div>
+        
+        <div>
+            <button id="execute-btn">Execute Command</button>
+            <button id="clear-btn">Clear Terminal</button>
+            <button id="new-session-btn">New Session</button>
+            <span id="loading" style="display: none;" class="loading"></span>
+        </div>
+        
+        <div id="status" class="status">Not connected. Press "New Session" to start.</div>
+    </div>
+
+    <script>
+        // Simple Terminal Script
+        let sessionId = null;
+        let isExecuting = false;
+
+        // DOM Elements
+        const terminal = document.getElementById('terminal');
+        const commandInput = document.getElementById('command-input');
+        const executeBtn = document.getElementById('execute-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const newSessionBtn = document.getElementById('new-session-btn');
+        const statusEl = document.getElementById('status');
+        const loadingEl = document.getElementById('loading');
+
+        // Initialize terminal
+        document.addEventListener('DOMContentLoaded', function() {
+            // Event listeners
+            executeBtn.addEventListener('click', executeCommand);
+            clearBtn.addEventListener('click', clearTerminal);
+            newSessionBtn.addEventListener('click', createSession);
+            
+            commandInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    executeCommand();
+                }
+            });
+            
+            // Disable command execution until we have a session
+            setExecuteEnabled(false);
+            
+            // Display welcome message
+            addOutput('Welcome to the iOS Terminal Tester', 'system-text');
+            addOutput('Click "New Session" to begin', 'system-text');
+        });
+
+        // Create a new session
+        async function createSession() {
+            try {
+                setLoading(true);
+                addOutput('Creating new session...', 'system-text');
+                
+                const response = await fetch('/create-session', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        userId: 'web-terminal-' + Date.now()
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    addOutput('Error: ' + data.error, 'error-text');
+                    statusEl.textContent = 'Failed to create session';
+                    return;
+                }
+                
+                sessionId = data.sessionId;
+                addOutput('Session created successfully: ' + sessionId, 'system-text');
+                addOutput('You can now execute commands', 'system-text');
+                statusEl.textContent = 'Connected. Session ID: ' + sessionId;
+                
+                setExecuteEnabled(true);
+                commandInput.focus();
+                
+            } catch (error) {
+                addOutput('Connection error: ' + error.message, 'error-text');
+                statusEl.textContent = 'Error connecting to server';
+                console.error('Session creation error:', error);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        // Execute command
+        async function executeCommand() {
+            const command = commandInput.value.trim();
+            if (!command) return;
+            
+            if (!sessionId) {
+                addOutput('No active session. Create a session first.', 'error-text');
+                return;
+            }
+            
+            try {
+                setLoading(true);
+                setExecuteEnabled(false);
+                isExecuting = true;
+                
+                // Display the command
+                addOutput('$ ' + command, 'command-text');
+                
+                const response = await fetch('/execute-command', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-Id': sessionId
+                    },
+                    body: JSON.stringify({ command })
+                });
+                
+                // Clear the input
+                commandInput.value = '';
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    addOutput(data.error, 'error-text');
+                } else {
+                    addOutput(data.output || '(Command executed with no output)');
+                }
+                
+            } catch (error) {
+                addOutput('Error executing command: ' + error.message, 'error-text');
+                
+                if (error.message.includes('401')) {
+                    sessionId = null;
+                    addOutput('Session expired. Please create a new session.', 'system-text');
+                    statusEl.textContent = 'Disconnected. Session expired.';
+                    setExecuteEnabled(false);
+                }
+                
+                console.error('Command execution error:', error);
+            } finally {
+                setLoading(false);
+                setExecuteEnabled(true);
+                isExecuting = false;
+                commandInput.focus();
+            }
+        }
+
+        // Add output to terminal
+        function addOutput(text, className = '') {
+            const outputDiv = document.createElement('div');
+            outputDiv.className = 'command-output';
+            
+            if (className) {
+                outputDiv.classList.add(className);
+            }
+            
+            outputDiv.textContent = text;
+            terminal.appendChild(outputDiv);
+            
+            // Scroll to bottom
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        // Clear terminal
+        function clearTerminal() {
+            terminal.innerHTML = '';
+            addOutput('Terminal cleared', 'system-text');
+        }
+
+        // Set loading state
+        function setLoading(isLoading) {
+            loadingEl.style.display = isLoading ? 'inline-block' : 'none';
+        }
+
+        // Enable/disable execute button
+        function setExecuteEnabled(enabled) {
+            executeBtn.disabled = !enabled;
+            commandInput.disabled = !enabled;
+        }
+    </script>
+</body>
+</html>
