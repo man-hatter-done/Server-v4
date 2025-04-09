@@ -23,6 +23,8 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 86400  # Cache static files for 1 day
 app.config['COMPRESS_ALGORITHM'] = ['gzip', 'deflate']  # Enable response compression
 app.config['COMPRESS_LEVEL'] = 6  # Medium compression level - good balance between CPU and size
 app.config['COMPRESS_MIN_SIZE'] = 500  # Only compress responses larger than 500 bytes
+app.config['START_TIME'] = time.time()  # Track app startup time for uptime reporting
+app.config['SERVER_VERSION'] = 'flask-2.0.0'  # Server version for consistent reporting
 
 # Initialize Flask-Compress for response compression
 compress = Compress()
@@ -103,9 +105,102 @@ API_KEY = os.environ.get('API_KEY', 'change-this-in-production')
 COMMAND_TIMEOUT = int(os.environ.get('COMMAND_TIMEOUT', 300))  # 5 minutes in seconds
 ENABLE_SYSTEM_COMMANDS = os.environ.get('ENABLE_SYSTEM_COMMANDS', 'True').lower() == 'true'
 
+# Session pool configuration from environment
+SESSION_POOL_SIZE = int(os.environ.get('SESSION_POOL_SIZE', 10))
+MAX_POOL_AGE = int(os.environ.get('MAX_POOL_AGE', 1800))  # 30 minutes in seconds
+
 # Create required directories
 os.makedirs('logs', exist_ok=True)
 os.makedirs('user_data', exist_ok=True)
+
+# Setup memory monitor to prevent OOM killer
+def monitor_memory_usage():
+    """
+    Monitor memory usage and take action if it gets too high
+    This runs in a background thread to prevent OOM killer
+    """
+    import gc
+    import time
+    import psutil
+    import logging
+    
+    logging.basicConfig(
+        filename='logs/memory_monitor.log',
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    # Configure thresholds
+    WARNING_THRESHOLD = 70  # Percent
+    CRITICAL_THRESHOLD = 85  # Percent
+    EMERGENCY_THRESHOLD = 95  # Percent
+    CHECK_INTERVAL = 30  # Seconds
+    
+    logging.info("Memory monitor started")
+    
+    while True:
+        try:
+            # Get current memory usage
+            process = psutil.Process(os.getpid())
+            mem_info = process.memory_info()
+            mem_percent = process.memory_percent()
+            
+            # Log current status periodically
+            if mem_percent > WARNING_THRESHOLD:
+                logging.warning(f"Memory usage: {mem_percent:.1f}% ({mem_info.rss / (1024 * 1024):.1f} MB)")
+                
+                # Warning level - run garbage collection
+                if mem_percent > WARNING_THRESHOLD:
+                    logging.info("Running garbage collection")
+                    gc.collect()
+                
+                # Critical level - release caches
+                if mem_percent > CRITICAL_THRESHOLD:
+                    logging.warning("Critical memory usage - releasing caches")
+                    # Clear file content cache
+                    file_content_cache.cache_clear()
+                    # Clear response cache
+                    response_cache.clear()
+                    # Reset script cache
+                    script_cache.clear()
+                    # Force garbage collection
+                    gc.collect()
+                
+                # Emergency level - take drastic action
+                if mem_percent > EMERGENCY_THRESHOLD:
+                    logging.error("Emergency memory usage - removing expired sessions")
+                    # Remove expired sessions
+                    with session_lock:
+                        current_time = time.time()
+                        expired_sessions = []
+                        
+                        # Find expired or old sessions
+                        for session_id, session in sessions.items():
+                            if current_time - session['last_accessed'] > SESSION_TIMEOUT / 2:
+                                expired_sessions.append(session_id)
+                        
+                        # Remove expired sessions
+                        for session_id in expired_sessions:
+                            terminate_process(session_id)
+                            del sessions[session_id]
+                            logging.info(f"Removed session {session_id} to save memory")
+                    
+                    # Force garbage collection again
+                    gc.collect()
+        
+        except Exception as e:
+            logging.error(f"Memory monitor error: {str(e)}")
+        
+        # Sleep before next check
+        time.sleep(CHECK_INTERVAL)
+
+# Start memory monitor in background thread
+try:
+    import psutil
+    memory_monitor_thread = threading.Thread(target=monitor_memory_usage, daemon=True)
+    memory_monitor_thread.start()
+except ImportError:
+    print("Warning: psutil not installed. Memory monitoring disabled.")
 
 # Session storage
 sessions = {}
@@ -207,59 +302,62 @@ def setup_user_environment(home_dir):
     """Set up a user environment with necessary files and directories - optimized for speed and reliability"""
     start_time = time.time()
     
-    # Create initial directories in parallel
-    os.makedirs(home_dir, exist_ok=True)
-    
-    # Fix permissions - ensure all users can access the directory
     try:
-        # Make directory and all subdirectories accessible
-        os.chmod(home_dir, 0o755)
-    except Exception as e:
-        print(f"Warning: Could not set permissions for {home_dir}: {str(e)}")
-    
-    # Create all required directories at once
-    dirs_to_create = [
-        os.path.join(home_dir, 'projects'),
-        os.path.join(home_dir, 'downloads'),
-        os.path.join(home_dir, '.local', 'bin'),
-        os.path.join(home_dir, '.config'),
-        os.path.join(home_dir, '.ssl'),
-        os.path.join(home_dir, '.pkg'),
-        os.path.join(home_dir, '.fifo'),  # For interactive commands
-    ]
-    
-    # Create directories with a single call
-    for directory in dirs_to_create:
-        os.makedirs(directory, exist_ok=True)
-        # Set proper permissions
+        # Create initial directories in parallel
+        os.makedirs(home_dir, exist_ok=True)
+        
+        # Fix permissions - ensure all users can access the directory
         try:
-            os.chmod(directory, 0o755)
-        except Exception:
-            pass  # Ignore permission errors
-    
-    # Only create venv if explicitly requested later (on-demand instead of at startup)
-    # This significantly speeds up initial session creation
-    
-    # Write template files quickly
-    bashrc_path = os.path.join(home_dir, '.bashrc')
-    help_path = os.path.join(home_dir, 'help.txt')
-    profile_path = os.path.join(home_dir, '.profile')
-    
-    # Parallel writing of files
-    file_writing_tasks = [
-        (bashrc_path, BASHRC_TEMPLATE),
-        (help_path, HELP_TEMPLATE)
-    ]
-    
-    # Write files if they don't exist
-    for file_path, content in file_writing_tasks:
-        if not os.path.exists(file_path):
-            with open(file_path, 'w') as f:
-                f.write(content)
-    
-    # Setup enhanced profile file for better environment
-    with open(profile_path, 'w') as f:
-        f.write("""
+            # Make directory and all subdirectories accessible
+            os.chmod(home_dir, 0o755)
+        except Exception as e:
+            print(f"Warning: Could not set permissions for {home_dir}: {str(e)}")
+        
+        # Create all required directories at once
+        dirs_to_create = [
+            os.path.join(home_dir, 'projects'),
+            os.path.join(home_dir, 'downloads'),
+            os.path.join(home_dir, '.local', 'bin'),
+            os.path.join(home_dir, '.config'),
+            os.path.join(home_dir, '.ssl'),
+            os.path.join(home_dir, '.pkg'),
+            os.path.join(home_dir, '.fifo'),  # For interactive commands
+        ]
+        
+        # Create directories with a single call
+        for directory in dirs_to_create:
+            os.makedirs(directory, exist_ok=True)
+            # Set proper permissions
+            try:
+                os.chmod(directory, 0o755)
+            except Exception:
+                pass  # Ignore permission errors
+        
+        # Write template files quickly - use try/except for each operation
+        user_bin_dir = os.path.join(home_dir, '.local', 'bin')
+        bashrc_path = os.path.join(home_dir, '.bashrc')
+        help_path = os.path.join(home_dir, 'help.txt')
+        profile_path = os.path.join(home_dir, '.profile')
+        
+        # Parallel writing of files with comprehensive error handling
+        file_writing_tasks = [
+            (bashrc_path, BASHRC_TEMPLATE),
+            (help_path, HELP_TEMPLATE)
+        ]
+        
+        # Write files if they don't exist
+        for file_path, content in file_writing_tasks:
+            try:
+                if not os.path.exists(file_path):
+                    with open(file_path, 'w') as f:
+                        f.write(content)
+            except Exception as e:
+                print(f"Warning: Could not write to {file_path}: {str(e)}")
+        
+        # Setup enhanced profile file for better environment
+        try:
+            with open(profile_path, 'w') as f:
+                f.write("""
 # Add local bin directory to PATH
 export PATH="$HOME/.local/bin:$PATH"
 
@@ -280,100 +378,136 @@ if [ -f "$HOME/.bashrc" ]; then
     . "$HOME/.bashrc"
 fi
 """)
-    
-    # Copy all user scripts for better functionality
-    user_bin_dir = os.path.join(home_dir, '.local', 'bin')
-    scripts_dir = 'user_scripts'
-    
-    if os.path.exists(scripts_dir):
-        # Copy all scripts, not just specific ones
-        for script_file in os.listdir(scripts_dir):
-            script_path = os.path.join(scripts_dir, script_file)
-            if os.path.isfile(script_path):
-                # Use cached script content if available for performance
-                dest_path = os.path.join(user_bin_dir, script_file)
-                
-                if script_path not in script_cache:
-                    with open(script_path, 'rb') as f:
-                        script_cache[script_path] = f.read()
-                
-                # Write from cache
-                with open(dest_path, 'wb') as f:
-                    f.write(script_cache[script_path])
-                
-                # Set executable permissions
-                os.chmod(dest_path, 0o755)
-    
-    # Set up enhanced environment using our new script if available
-    setup_script = os.path.join(user_bin_dir, 'setup-enhanced-environment')
-    if os.path.exists(os.path.join(scripts_dir, 'setup-enhanced-environment')):
-        # Create symbolic link to the setup script
-        os.symlink(os.path.join(scripts_dir, 'setup-enhanced-environment'), setup_script)
-        os.chmod(setup_script, 0o755)
+        except Exception as e:
+            print(f"Warning: Could not write profile file: {str(e)}")
         
-        # Run the setup script in the background for this user
-        # Use nohup and background process to avoid blocking
-        try:
-            subprocess.Popen(
-                f"cd {home_dir} && bash {setup_script} > {home_dir}/.setup.log 2>&1 &",
-                shell=True,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
-            )
-        except Exception as e:
-            print(f"Warning: Failed to start enhanced environment setup: {str(e)}")
-    
-    # Set up the pkg command if not already present
-    pkg_dest = os.path.join(user_bin_dir, 'pkg')
-    if not os.path.exists(pkg_dest) and os.path.exists(os.path.join(scripts_dir, 'termux-environment')):
-        # Extract the pkg command from termux-environment
-        try:
-            with open(os.path.join(scripts_dir, 'termux-environment'), 'r') as f:
-                termux_env_content = f.read()
+        # Copy all user scripts for better functionality
+        scripts_dir = 'user_scripts'
+        
+        if os.path.exists(scripts_dir):
+            # Copy all scripts, not just specific ones
+            for script_file in os.listdir(scripts_dir):
+                try:
+                    script_path = os.path.join(scripts_dir, script_file)
+                    if os.path.isfile(script_path):
+                        # Use cached script content if available for performance
+                        dest_path = os.path.join(user_bin_dir, script_file)
+                        
+                        # Skip if destination already exists and has same size (optimization)
+                        if os.path.exists(dest_path) and os.path.getsize(dest_path) == os.path.getsize(script_path):
+                            continue
+                            
+                        if script_path not in script_cache:
+                            with open(script_path, 'rb') as f:
+                                script_cache[script_path] = f.read()
+                        
+                        # Write from cache
+                        with open(dest_path, 'wb') as f:
+                            f.write(script_cache[script_path])
+                        
+                        # Set executable permissions
+                        os.chmod(dest_path, 0o755)
+                except Exception as e:
+                    print(f"Warning: Failed to copy script {script_file}: {str(e)}")
+        
+        # Set up enhanced environment using our new script if available
+        setup_script = os.path.join(user_bin_dir, 'setup-enhanced-environment')
+        if os.path.exists(os.path.join(scripts_dir, 'setup-enhanced-environment')):
+            # Check if the symlink already exists - handle it properly to avoid conflicts
+            try:
+                if os.path.exists(setup_script):
+                    # If it's already a symlink, we're good - if not, remove and recreate
+                    if not os.path.islink(setup_script):
+                        os.remove(setup_script)
+                        os.symlink(os.path.join(scripts_dir, 'setup-enhanced-environment'), setup_script)
+                else:
+                    # Create symbolic link to the setup script if it doesn't exist
+                    os.symlink(os.path.join(scripts_dir, 'setup-enhanced-environment'), setup_script)
                 
-            # Find the pkg command definition
-            if 'pkg command for Termux' in termux_env_content:
-                pkg_start = termux_env_content.find('pkg command for Termux')
-                if pkg_start > 0:
-                    # Extract the command definition
-                    pkg_content = termux_env_content[pkg_start:pkg_start+5000]  # Assume it's less than 5000 chars
-                    # Find the end of the function
-                    pkg_end = pkg_content.find('\nEOF\n')
-                    if pkg_end > 0:
-                        pkg_script = pkg_content[:pkg_end+5]  # Include the EOF
+                # Ensure permissions are correct
+                os.chmod(setup_script, 0o755)
+                
+                # Run the setup script in the background for this user
+                # Use nohup and background process to avoid blocking
+                subprocess.Popen(
+                    f"cd {home_dir} && bash {setup_script} > {home_dir}/.setup.log 2>&1 &",
+                    shell=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
+            except Exception as e:
+                print(f"Warning: Failed to setup enhanced environment: {str(e)}")
+        
+        # Set up the pkg command if not already present
+        pkg_dest = os.path.join(user_bin_dir, 'pkg')
+        if not os.path.exists(pkg_dest) and os.path.exists(os.path.join(scripts_dir, 'termux-environment')):
+            # Extract the pkg command from termux-environment
+            try:
+                with open(os.path.join(scripts_dir, 'termux-environment'), 'r') as f:
+                    termux_env_content = f.read()
+                    
+                # Find the pkg command definition
+                if 'pkg command for Termux' in termux_env_content:
+                    pkg_start = termux_env_content.find('pkg command for Termux')
+                    if pkg_start > 0:
+                        # Extract the command definition
+                        pkg_content = termux_env_content[pkg_start:pkg_start+5000]  # Assume it's less than 5000 chars
+                        # Find the end of the function
+                        pkg_end = pkg_content.find('\nEOF\n')
+                        if pkg_end > 0:
+                            pkg_script = pkg_content[:pkg_end+5]  # Include the EOF
+                            
+                            # Write to the pkg command file
+                            with open(pkg_dest, 'w') as f:
+                                f.write('#!/bin/bash\n# Extracted from termux-environment\n\n')
+                                f.write(pkg_script)
+                            
+                            # Make executable
+                            os.chmod(pkg_dest, 0o755)
+            except Exception as e:
+                print(f"Warning: Failed to extract pkg command: {str(e)}")
+        
+        # Setup links for OpenSSL wrapper if available
+        openssl_wrapper_src = os.path.join(scripts_dir, 'openssl-wrapper')
+        openssl_wrapper_dest = os.path.join(user_bin_dir, 'openssl-wrapper')
+        
+        if os.path.exists(openssl_wrapper_src):
+            try:
+                # Copy OpenSSL wrapper or create a symlink
+                if os.path.exists(openssl_wrapper_dest):
+                    # Check if content is different before overwriting
+                    if os.path.getsize(openssl_wrapper_src) != os.path.getsize(openssl_wrapper_dest):
+                        shutil.copy2(openssl_wrapper_src, openssl_wrapper_dest)
+                else:
+                    shutil.copy2(openssl_wrapper_src, openssl_wrapper_dest)
+                
+                os.chmod(openssl_wrapper_dest, 0o755)
+                
+                # Create an alias in bashrc (check first if it already exists)
+                openssl_alias = '\n# Use enhanced OpenSSL wrapper\nalias openssl="openssl-wrapper"\n'
+                try:
+                    if os.path.exists(bashrc_path):
+                        with open(bashrc_path, 'r') as f:
+                            bashrc_content = f.read()
                         
-                        # Write to the pkg command file
-                        with open(pkg_dest, 'w') as f:
-                            f.write('#!/bin/bash\n# Extracted from termux-environment\n\n')
-                            f.write(pkg_script)
-                        
-                        # Make executable
-                        os.chmod(pkg_dest, 0o755)
-        except Exception as e:
-            print(f"Warning: Failed to extract pkg command: {str(e)}")
-    
-    # Setup links for OpenSSL wrapper if available
-    openssl_wrapper_src = os.path.join(scripts_dir, 'openssl-wrapper')
-    openssl_wrapper_dest = os.path.join(user_bin_dir, 'openssl-wrapper')
-    
-    if os.path.exists(openssl_wrapper_src):
-        try:
-            # Copy OpenSSL wrapper
-            shutil.copy2(openssl_wrapper_src, openssl_wrapper_dest)
-            os.chmod(openssl_wrapper_dest, 0o755)
-            
-            # Create an alias in bashrc
-            with open(bashrc_path, 'a') as f:
-                f.write('\n# Use enhanced OpenSSL wrapper\nalias openssl="openssl-wrapper"\n')
-        except Exception as e:
-            print(f"Warning: Failed to setup OpenSSL wrapper: {str(e)}")
+                        if "alias openssl=" not in bashrc_content:
+                            with open(bashrc_path, 'a') as f:
+                                f.write(openssl_alias)
+                    else:
+                        with open(bashrc_path, 'w') as f:
+                            f.write(BASHRC_TEMPLATE + openssl_alias)
+                except Exception as e:
+                    print(f"Warning: Failed to update bashrc: {str(e)}")
+            except Exception as e:
+                print(f"Warning: Failed to setup OpenSSL wrapper: {str(e)}")
 
-    # Create a simple session keep-alive script
-    keep_alive_path = os.path.join(user_bin_dir, 'session-keep-alive')
-    with open(keep_alive_path, 'w') as f:
-        f.write("""#!/bin/bash
+        # Create a simple session keep-alive script
+        keep_alive_path = os.path.join(user_bin_dir, 'session-keep-alive')
+        try:
+            with open(keep_alive_path, 'w') as f:
+                f.write("""#!/bin/bash
 # Simple script to keep session alive by running light commands periodically
 
 echo "Starting session keep-alive service..."
@@ -386,11 +520,65 @@ while true; do
     sleep 300  # 5 minutes
 done
 """)
-    os.chmod(keep_alive_path, 0o755)
+            os.chmod(keep_alive_path, 0o755)
+        except Exception as e:
+            print(f"Warning: Failed to create keep-alive script: {str(e)}")
+        
+        # Create a memory-monitoring script to help prevent OOM conditions
+        memory_monitor_path = os.path.join(user_bin_dir, 'monitor-memory')
+        try:
+            with open(memory_monitor_path, 'w') as f:
+                f.write("""#!/bin/bash
+# Memory monitoring and management script
+
+echo "Starting memory monitor..."
+echo "This script helps prevent out-of-memory crashes."
+echo "Press Ctrl+C to stop."
+
+THRESHOLD=90  # Memory usage percentage threshold
+
+while true; do
+    # Get current memory usage percentage
+    if command -v free &> /dev/null; then
+        # Linux with free command
+        MEM_USAGE=$(free | grep Mem | awk '{print int($3/$2 * 100)}')
+    elif command -v vm_stat &> /dev/null; then
+        # macOS with vm_stat
+        MEM_USAGE=$(vm_stat | grep "Page free" | awk '{print int((1-$3) * 100)}')
+    else
+        # Fallback - just use a safe value
+        MEM_USAGE=70
+    fi
     
-    # Log the setup time for performance monitoring
-    setup_time = time.time() - start_time
-    print(f"User environment setup completed in {setup_time:.2f} seconds")
+    if [ "$MEM_USAGE" -gt "$THRESHOLD" ]; then
+        echo "WARNING: High memory usage detected: ${MEM_USAGE}%"
+        echo "Clearing cached data to free memory..."
+        
+        # Clear Python cache
+        python3 -c "import gc; gc.collect()" 2>/dev/null || true
+        
+        # Clear any large temporary files
+        find /tmp -type f -size +10M -delete 2>/dev/null || true
+        
+        # Reduce memory usage by restarting services (not in this user space)
+        echo "Memory cleanup completed."
+    fi
+    
+    sleep 60  # Check every minute
+done
+""")
+            os.chmod(memory_monitor_path, 0o755)
+        except Exception as e:
+            print(f"Warning: Failed to create memory monitor script: {str(e)}")
+        
+        # Log the setup time for performance monitoring
+        setup_time = time.time() - start_time
+        print(f"User environment setup completed in {setup_time:.2f} seconds")
+        
+        return True
+    except Exception as e:
+        print(f"Error setting up user environment for {home_dir}: {str(e)}")
+        return False
 
 
 def terminate_process(session_id):
@@ -484,6 +672,12 @@ def index():
     """Serve web terminal interface"""
     return send_file('static/simple-terminal.html')
 
+@app.route('/status')
+@cached_response(timeout=60)  # Cache for 1 minute only to keep data fresh
+def status_dashboard():
+    """Serve server status dashboard for monitoring"""
+    return send_file('static/status.html')
+
 
 @app.route('/static/<path:path>')
 @cached_response(timeout=86400)  # Cache for 1 day
@@ -519,29 +713,84 @@ def serve_static(path):
 # API Endpoints
 # Session pool - pre-created sessions for faster allocation
 session_pool = []
-SESSION_POOL_SIZE = 3  # Number of pre-created sessions to maintain
+SESSION_POOL_SIZE = 10  # Increased pool size for better concurrency
+MAX_POOL_AGE = 1800  # Maximum age of a pooled session (30 minutes)
 session_pool_lock = threading.Lock()
+pool_initialization_in_progress = False  # Flag to prevent multiple initializations
 
 def initialize_session_pool():
     """Pre-create sessions for the pool to speed up session allocation"""
-    with session_pool_lock:
-        # Only fill the pool if it's empty or below threshold
-        while len(session_pool) < SESSION_POOL_SIZE:
-            session_id = str(uuid.uuid4())
-            home_dir = os.path.join('user_data', session_id)
+    global pool_initialization_in_progress
+    
+    # Use a flag to prevent multiple threads from initializing at once
+    if pool_initialization_in_progress:
+        return
+        
+    # Set flag before acquiring lock to prevent race conditions
+    pool_initialization_in_progress = True
+    
+    try:
+        with session_pool_lock:
+            current_time = time.time()
             
-            # Set up environment in background
-            setup_user_environment(home_dir)
+            # Remove any old sessions from the pool
+            expired_sessions = [s for s in session_pool if current_time - s['created'] > MAX_POOL_AGE]
+            for expired in expired_sessions:
+                session_pool.remove(expired)
+                
+            # Only fill the pool if it's below threshold
+            needed_sessions = SESSION_POOL_SIZE - len(session_pool)
+            new_sessions = []
             
-            # Add to pool
-            session_pool.append({
-                'session_id': session_id,
-                'home_dir': home_dir,
-                'created': time.time()
-            })
+            for _ in range(needed_sessions):
+                session_id = str(uuid.uuid4())
+                home_dir = os.path.join('user_data', session_id)
+                
+                # Create the session in a controlled process
+                try:
+                    # Set up environment with basic structure only
+                    os.makedirs(home_dir, exist_ok=True)
+                    
+                    # Create basic required directories immediately
+                    dirs_to_create = [
+                        os.path.join(home_dir, '.local', 'bin'),
+                        os.path.join(home_dir, '.config'),
+                    ]
+                    
+                    for directory in dirs_to_create:
+                        os.makedirs(directory, exist_ok=True)
+                    
+                    # Add to new sessions list
+                    new_sessions.append({
+                        'session_id': session_id,
+                        'home_dir': home_dir,
+                        'created': time.time()
+                    })
+                except Exception as e:
+                    print(f"Error pre-creating session: {str(e)}")
+                    continue
+            
+            # Add all successfully created sessions to the pool
+            session_pool.extend(new_sessions)
+            
+            # Now process the environment setup for each new session in background
+            for session in new_sessions:
+                # Set up the complete environment in a separate thread
+                threading.Thread(
+                    target=setup_user_environment,
+                    args=(session['home_dir'],),
+                    daemon=True
+                ).start()
+                
+            print(f"Session pool initialized with {len(session_pool)} sessions (added {len(new_sessions)} new)")
+    except Exception as e:
+        print(f"Error during session pool initialization: {str(e)}")
+    finally:
+        # Reset flag when done
+        pool_initialization_in_progress = False
     
     # Schedule next pool refill
-    threading.Timer(60.0, initialize_session_pool).start()
+    threading.Timer(30.0, initialize_session_pool).start()  # Run more frequently for better availability
 
 # Start session pool initialization
 initialize_session_pool()
@@ -1030,14 +1279,59 @@ def delete_session():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with enhanced diagnostics"""
+    import psutil
+    
+    # Gather system stats
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    mem_percent = process.memory_percent()
+    
+    # Gather session information
     with session_lock:
         active_sessions = len(sessions)
+        
+    with session_pool_lock:
+        available_pool_sessions = len(session_pool)
     
+    # Get system load average (Unix-only)
+    try:
+        load_avg = os.getloadavg()
+    except (AttributeError, OSError):
+        load_avg = (0, 0, 0)
+        
+    # Check if memory usage is in warning territory
+    memory_status = "ok"
+    if mem_percent > 85:
+        memory_status = "critical"
+    elif mem_percent > 70:
+        memory_status = "warning"
+    
+    # Return comprehensive health information
     return jsonify({
         'status': 'ok',
         'activeSessions': active_sessions,
-        'version': 'flask-1.0.0'
+        'version': app.config['SERVER_VERSION'],
+        'uptime': time.time() - app.config.get('START_TIME', time.time()),
+        'memory': {
+            'percent': f"{mem_percent:.1f}%",
+            'used_mb': mem_info.rss / (1024 * 1024),
+            'status': memory_status
+        },
+        'pooledSessions': available_pool_sessions,
+        'systemLoad': {
+            '1min': load_avg[0],
+            '5min': load_avg[1],
+            '15min': load_avg[2]
+        },
+        'cacheStats': {
+            'responseCache': {
+                'size': len(response_cache),
+                'hits': response_cache_hits,
+                'misses': response_cache_misses
+            },
+            'fileCache': getattr(file_content_cache, 'currsize', 0)
+        }
     })
 
 
