@@ -351,6 +351,7 @@ def setup_user_environment(home_dir):
     start_time = time.time()
     
     try:
+        print(f"Setting up user environment in {home_dir}")
         # Create initial directories in parallel
         os.makedirs(home_dir, exist_ok=True)
         
@@ -1093,13 +1094,47 @@ def execute_command():
     
     # Special handling for OpenSSL commands - use our wrapper if available
     if command.strip().startswith('openssl '):
+        # First, verify the user directory exists - create it if it doesn't
+        if not os.path.isdir(session['home_dir']):
+            try:
+                os.makedirs(session['home_dir'], exist_ok=True)
+                print(f"Created missing user directory: {session['home_dir']}")
+                # Since we had to create the directory, we should set up the environment
+                setup_user_environment(session['home_dir'])
+            except Exception as e:
+                print(f"Error creating user directory: {str(e)}")
+                return jsonify({'error': f"Could not access user directory: {str(e)}"}), 500
+
+        # Check local user openssl-wrapper
         openssl_wrapper = os.path.join(session['home_dir'], '.local', 'bin', 'openssl-wrapper')
-        if os.path.exists(openssl_wrapper):
+        
+        # If wrapper doesn't exist, copy it from source script dir
+        if not os.path.exists(openssl_wrapper):
+            try:
+                # Ensure the .local/bin directory exists
+                os.makedirs(os.path.join(session['home_dir'], '.local', 'bin'), exist_ok=True)
+                
+                # Copy the script from the source location
+                source_wrapper = os.path.join('user_scripts', 'openssl-wrapper')
+                if os.path.exists(source_wrapper):
+                    shutil.copy2(source_wrapper, openssl_wrapper)
+                    os.chmod(openssl_wrapper, 0o755)
+                    print(f"Copied openssl-wrapper to {openssl_wrapper}")
+                else:
+                    print(f"Source openssl-wrapper not found at {source_wrapper}")
+            except Exception as e:
+                print(f"Failed to copy openssl-wrapper: {str(e)}")
+
+        # Now check if the wrapper exists and use it if possible
+        if os.path.exists(openssl_wrapper) and os.access(openssl_wrapper, os.X_OK):
             # Extract the openssl subcommand and arguments
             openssl_parts = command.strip().split(' ')
             if len(openssl_parts) > 1:
                 openssl_cmd = ' '.join(openssl_parts[1:])
-                command = f"{openssl_wrapper} {openssl_cmd}"
+                command = f"bash {openssl_wrapper} {openssl_cmd}"
+        else:
+            # Fallback to direct execution with preset passphrase for OpenSSL
+            print(f"Using direct openssl command (wrapper not available at {openssl_wrapper})")
     
     # Prevent potentially dangerous or resource-intensive commands
     disallowed_commands = [
@@ -1199,39 +1234,64 @@ def execute_command():
         if is_interactive:
             interactive_handler = os.path.join(session['home_dir'], '.local', 'bin', 'interactive-command-handler')
             
-            if os.path.exists(interactive_handler):
-                # Use the interactive command handler
-                handler_cmd = f"cd {session['home_dir']} && {source_cmd}; {interactive_handler} '{command}' '{session_id}'"
+            # If the interactive handler doesn't exist, copy it from source
+            if not os.path.exists(interactive_handler):
+                try:
+                    # Ensure the .local/bin directory exists
+                    os.makedirs(os.path.join(session['home_dir'], '.local', 'bin'), exist_ok=True)
+                    
+                    # Copy the script from the source location
+                    source_handler = os.path.join('user_scripts', 'interactive-command-handler')
+                    if os.path.exists(source_handler):
+                        shutil.copy2(source_handler, interactive_handler)
+                        os.chmod(interactive_handler, 0o755)
+                        print(f"Copied interactive-command-handler to {interactive_handler}")
+                    else:
+                        print(f"Source interactive-command-handler not found at {source_handler}")
+                except Exception as e:
+                    print(f"Failed to copy interactive-command-handler: {str(e)}")
+            
+            if os.path.exists(interactive_handler) and os.access(interactive_handler, os.X_OK):
+                # Use the interactive command handler with bash explicitly
+                handler_cmd = f"cd {session['home_dir']} && {source_cmd}; bash {interactive_handler} '{command}' '{session_id}'"
                 
                 # Run the handler and get FIFO paths
-                handler_process = subprocess.Popen(
-                    handler_cmd,
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    cwd=session['home_dir'],
-                    env=env
-                )
-                
-                handler_out, handler_err = handler_process.communicate(timeout=10)
-                
-                if handler_process.returncode == 0 and "FIFOs:" in handler_out:
-                    # Extract FIFO paths from handler output
-                    fifo_info = handler_out.strip().split("FIFOs: ")[1]
-                    cmd_fifo, resp_fifo = fifo_info.split(":")
+                try:
+                    handler_process = subprocess.Popen(
+                        handler_cmd,
+                        shell=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        cwd=session['home_dir'],
+                        env=env
+                    )
                     
-                    # Return special response for interactive commands
-                    return jsonify({
-                        'interactive': True,
-                        'message': 'Interactive command started. Use the provided FIFOs to communicate.',
-                        'cmd_fifo': cmd_fifo,
-                        'resp_fifo': resp_fifo
-                    })
-                else:
-                    # Fall back to regular execution if the handler failed
-                    print(f"Interactive handler failed: {handler_err}")
+                    handler_out, handler_err = handler_process.communicate(timeout=10)
+                    
+                    if handler_process.returncode == 0 and "FIFOs:" in handler_out:
+                        # Extract FIFO paths from handler output
+                        fifo_info = handler_out.strip().split("FIFOs: ")[1]
+                        cmd_fifo, resp_fifo = fifo_info.split(":")
+                        
+                        # Return special response for interactive commands
+                        return jsonify({
+                            'interactive': True,
+                            'message': 'Interactive command started. Use the provided FIFOs to communicate.',
+                            'cmd_fifo': cmd_fifo,
+                            'resp_fifo': resp_fifo
+                        })
+                    else:
+                        # Fall back to regular execution if the handler failed
+                        print(f"Interactive handler failed: {handler_err}")
+                        print(f"Handler output: {handler_out}")
+                        is_interactive = False
+                except Exception as e:
+                    print(f"Error running interactive handler: {str(e)}")
                     is_interactive = False
+            else:
+                print(f"Interactive handler not found or not executable at {interactive_handler}")
+                is_interactive = False
         
         # Start process in its own process group
         process = subprocess.Popen(
