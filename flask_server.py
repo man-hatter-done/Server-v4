@@ -13,9 +13,16 @@ from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, send_file, render_template, make_response
 from flask_cors import CORS
 from flask_compress import Compress
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
 import cachetools.func
+import select
+import io
+import eventlet
 from file_management import register_file_management_endpoints
+
+# Use eventlet for WebSocket support
+eventlet.monkey_patch()
 
 # Create a Flask app with optimized settings
 app = Flask(__name__, static_folder='static')
@@ -28,6 +35,7 @@ app.config['START_TIME'] = time.time()  # Track app startup time for uptime repo
 app.config['SERVER_VERSION'] = 'flask-2.0.0'  # Server version for consistent reporting
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # Limit request size to 16MB
 app.config['PROPAGATE_EXCEPTIONS'] = True  # Make sure exceptions are properly propagated
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev_key_change_in_production')  # Required for SocketIO
 
 # Add initialization logging to help diagnose worker issues
 print(f"Flask app initialization starting at {time.time()}")
@@ -46,6 +54,506 @@ compress.init_app(app)
 
 # Enable CORS with optimized settings
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True, max_age=86400)
+
+# Initialize SocketIO
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', ping_timeout=30, 
+                    ping_interval=15, max_http_buffer_size=1024 * 1024)
+print(f"SocketIO initialized with mode: {socketio.async_mode}")
+
+# Map of active WebSocket sessions to their corresponding terminal sessions
+socket_sessions = {}
+
+# Map of terminal session IDs to active command processes
+socket_processes = {}
+
+# WebSocket event handlers
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection"""
+    print(f"Client connected: {request.sid}")
+    socketio.emit('status', {'status': 'connected'}, to=request.sid)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle client disconnection"""
+    print(f"Client disconnected: {request.sid}")
+    # Clean up any running processes for this socket
+    if request.sid in socket_sessions:
+        session_id = socket_sessions[request.sid]
+        if session_id in socket_processes:
+            try:
+                # Terminate process
+                process_info = socket_processes[session_id]
+                os.killpg(os.getpgid(process_info['process'].pid), signal.SIGTERM)
+                del socket_processes[session_id]
+                print(f"Terminated process for session {session_id}")
+            except Exception as e:
+                print(f"Error terminating process: {str(e)}")
+        # Remove socket session mapping
+        del socket_sessions[request.sid]
+
+@socketio.on('create_session')
+def handle_create_session(data):
+    """Create a new terminal session"""
+    try:
+        user_id = data.get('userId', f'socket-user-{str(uuid.uuid4())}')
+        client_ip = request.remote_addr
+        
+        # Create a new session
+        session_id = str(uuid.uuid4())
+        home_dir = os.path.join('user_data', session_id)
+        
+        # Set up the user environment with necessary files
+        setup_user_environment(home_dir)
+        
+        with session_lock:
+            sessions[session_id] = {
+                'user_id': user_id,
+                'client_ip': client_ip,
+                'created': time.time(),
+                'last_accessed': time.time(),
+                'home_dir': home_dir
+            }
+        
+        # Map socket ID to session ID
+        socket_sessions[request.sid] = session_id
+        
+        # Log activity
+        log_activity('session', {
+            'action': 'created_websocket',
+            'session_id': session_id,
+            'user_id': user_id,
+            'client_ip': client_ip,
+            'socket_id': request.sid
+        })
+        
+        # Return session information
+        socketio.emit('session_created', {
+            'sessionId': session_id,
+            'expiresIn': SESSION_TIMEOUT * 1000,  # Convert to milliseconds
+            'workingDirectory': '~',
+            'message': 'Session created successfully'
+        }, to=request.sid)
+        
+    except Exception as e:
+        print(f"Error creating session: {str(e)}")
+        socketio.emit('session_created', {
+            'error': f'Failed to create session: {str(e)}'
+        }, to=request.sid)
+
+@socketio.on('join_session')
+def handle_join_session(data):
+    """Join a specific session room"""
+    session_id = data.get('session_id')
+    if not session_id:
+        socketio.emit('error', {'error': 'No session ID provided'}, to=request.sid)
+        return
+    
+    # Get the session
+    session = get_session(session_id)
+    if not session:
+        socketio.emit('session_expired', {'message': 'Session expired or invalid'}, to=request.sid)
+        return
+    
+    # Join the session room
+    join_room(session_id)
+    
+    # Map socket ID to session ID
+    socket_sessions[request.sid] = session_id
+    
+    print(f"Socket {request.sid} joined session {session_id}")
+
+@socketio.on('end_session')
+def handle_end_session(data):
+    """End a terminal session"""
+    session_id = data.get('session_id')
+    if not session_id:
+        socketio.emit('error', {'error': 'No session ID provided'}, to=request.sid)
+        return
+    
+    try:
+        # Clean up any running processes
+        if session_id in socket_processes:
+            try:
+                process_info = socket_processes[session_id]
+                os.killpg(os.getpgid(process_info['process'].pid), signal.SIGTERM)
+                del socket_processes[session_id]
+            except Exception as e:
+                print(f"Error terminating process during session end: {str(e)}")
+        
+        # Remove session
+        with session_lock:
+            if session_id in sessions:
+                del sessions[session_id]
+        
+        # Leave the session room
+        leave_room(session_id)
+        
+        # Remove socket session mapping
+        if request.sid in socket_sessions:
+            del socket_sessions[request.sid]
+        
+        # Log activity
+        log_activity('session', {
+            'action': 'ended_websocket',
+            'session_id': session_id,
+            'socket_id': request.sid
+        })
+        
+        socketio.emit('session_ended', {'message': 'Session terminated successfully'}, to=request.sid)
+        
+    except Exception as e:
+        print(f"Error ending session: {str(e)}")
+        socketio.emit('error', {'error': f'Failed to end session: {str(e)}'}, to=request.sid)
+
+@socketio.on('execute_command')
+def handle_execute_command(data):
+    """Execute a command in the terminal session with real-time output streaming"""
+    command = data.get('command')
+    session_id = data.get('session_id')
+    
+    if not command:
+        socketio.emit('command_error', {'error': 'No command provided'}, to=request.sid)
+        return
+    
+    if not session_id:
+        socketio.emit('command_error', {'error': 'No session ID provided'}, to=request.sid)
+        return
+    
+    # Get the session
+    session = get_session(session_id)
+    
+    # If session expired, create a new one automatically
+    auto_renewed = False
+    if not session:
+        try:
+            # Create a new session
+            print(f"Session {session_id} expired, creating a new session")
+            
+            # Use socket ID as user ID for the new session
+            user_id = request.sid
+            client_ip = request.remote_addr
+            
+            # Create a new session
+            new_session_id = str(uuid.uuid4())
+            home_dir = os.path.join('user_data', new_session_id)
+            
+            # Set up the user environment with necessary files
+            setup_user_environment(home_dir)
+            
+            with session_lock:
+                sessions[new_session_id] = {
+                    'user_id': user_id,
+                    'client_ip': client_ip,
+                    'created': time.time(),
+                    'last_accessed': time.time(),
+                    'home_dir': home_dir
+                }
+            
+            # Update socket session mapping
+            socket_sessions[request.sid] = new_session_id
+            
+            # Join the new session room
+            join_room(new_session_id)
+            
+            # Log activity
+            log_activity('session', {
+                'action': 'auto_renewed_websocket',
+                'old_session_id': session_id,
+                'new_session_id': new_session_id,
+                'user_id': user_id,
+                'client_ip': client_ip,
+                'socket_id': request.sid
+            })
+            
+            # Use the new session
+            session_id = new_session_id
+            session = sessions[session_id]
+            auto_renewed = True
+            
+            # Notify client of session renewal
+            socketio.emit('command_output', {
+                'output': f"Session expired. Created new session: {session_id[:8]}...\n",
+                'sessionRenewed': True,
+                'newSessionId': session_id
+            }, to=request.sid)
+            
+        except Exception as e:
+            print(f"Error creating new session: {str(e)}")
+            socketio.emit('command_error', {
+                'error': f"Failed to create new session: {str(e)}"
+            }, to=request.sid)
+            return
+    
+    # Reset the last_accessed time to prevent timeout during command execution
+    with session_lock:
+        if session_id in sessions:
+            sessions[session_id]['last_accessed'] = time.time()
+    
+    # Verify the user directory exists for all commands - create it if it doesn't
+    if not os.path.isdir(session['home_dir']):
+        try:
+            os.makedirs(session['home_dir'], exist_ok=True)
+            print(f"Created missing user directory: {session['home_dir']}")
+            # Since we had to create the directory, we should set up the environment
+            setup_user_environment(session['home_dir'])
+        except Exception as e:
+            print(f"Error creating user directory: {str(e)}")
+            socketio.emit('command_error', {
+                'error': f"Could not access user directory: {str(e)}"
+            }, to=request.sid)
+            return
+    
+    # Handle terminal-based editors (nano, vim, emacs, etc.)
+    terminal_editors = ['nano', 'vim', 'vi', 'emacs', 'pico', 'joe', 'ed']
+    for editor in terminal_editors:
+        if command.strip().startswith(f"{editor} "):
+            # Extract filename from command
+            parts = command.strip().split()
+            if len(parts) > 1:
+                filename = parts[1]
+                # Check if file exists, create it if it doesn't
+                filepath = os.path.join(session['home_dir'], filename)
+                try:
+                    # Create parent directories if they don't exist
+                    os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+                    
+                    # Create the file if it doesn't exist
+                    if not os.path.exists(filepath):
+                        with open(filepath, 'w') as f:
+                            f.write('')
+                            
+                    # Send message explaining that web-based editors aren't supported
+                    socketio.emit('command_output', {
+                        'output': f"Terminal-based editors like {editor} aren't fully supported in the web terminal.\n\n"
+                                 f"The file '{filename}' has been created. You can use these alternatives:\n"
+                                 f"1. Use 'cat > {filename}' to create/edit the file (Ctrl+D to save)\n"
+                                 f"2. Use 'echo \"content\" > {filename}' to write to the file\n"
+                                 f"3. Use 'cat {filename}' to view the file contents"
+                    }, to=request.sid)
+                    
+                    socketio.emit('command_complete', {
+                        'exitCode': 0,
+                        'sessionRenewed': auto_renewed,
+                        'newSessionId': session_id if auto_renewed else None
+                    }, to=request.sid)
+                    return
+                    
+                except Exception as e:
+                    socketio.emit('command_error', {
+                        'error': f"Failed to create file: {str(e)}",
+                        'sessionRenewed': auto_renewed,
+                        'newSessionId': session_id if auto_renewed else None
+                    }, to=request.sid)
+                    return
+            else:
+                socketio.emit('command_output', {
+                    'output': f"Terminal-based editors like {editor} aren't fully supported in the web terminal.\n"
+                             f"Please specify a filename, e.g., {editor} filename.txt"
+                }, to=request.sid)
+                
+                socketio.emit('command_complete', {
+                    'exitCode': 0,
+                    'sessionRenewed': auto_renewed,
+                    'newSessionId': session_id if auto_renewed else None
+                }, to=request.sid)
+                return
+    
+    # Handle Python code execution (if it looks like Python code)
+    python_patterns = ['print(', 'def ', 'import ', 'for ', 'while ', 'if ', 'class ', 'from ']
+    is_python_code = False
+    for pattern in python_patterns:
+        if command.strip().startswith(pattern):
+            is_python_code = True
+            break
+    
+    if is_python_code:
+        # Wrap the command in python -c
+        python_cmd = command.replace('"', '\\"')  # Escape double quotes
+        command = f'python3 -c "{python_cmd}"'
+    
+    # Special handling for OpenSSL commands - use our wrapper if available
+    if command.strip().startswith('openssl '):
+        # Check local user openssl-wrapper
+        openssl_wrapper = os.path.join(session['home_dir'], '.local', 'bin', 'openssl-wrapper')
+        
+        # If wrapper doesn't exist, copy it from source script dir
+        if not os.path.exists(openssl_wrapper):
+            try:
+                # Ensure the .local/bin directory exists
+                os.makedirs(os.path.join(session['home_dir'], '.local', 'bin'), exist_ok=True)
+                
+                # Copy the script from the source location
+                source_wrapper = os.path.join('user_scripts', 'openssl-wrapper')
+                if os.path.exists(source_wrapper):
+                    shutil.copy2(source_wrapper, openssl_wrapper)
+                    os.chmod(openssl_wrapper, 0o755)
+                    print(f"Copied openssl-wrapper to {openssl_wrapper}")
+                else:
+                    print(f"Source openssl-wrapper not found at {source_wrapper}")
+            except Exception as e:
+                print(f"Failed to copy openssl-wrapper: {str(e)}")
+
+        # Now check if the wrapper exists and use it if possible
+        if os.path.exists(openssl_wrapper) and os.access(openssl_wrapper, os.X_OK):
+            # Extract the openssl subcommand and arguments
+            openssl_parts = command.strip().split(' ')
+            if len(openssl_parts) > 1:
+                openssl_cmd = ' '.join(openssl_parts[1:])
+                command = f"bash {openssl_wrapper} {openssl_cmd}"
+        else:
+            # Fallback to direct execution with preset passphrase for OpenSSL
+            print(f"Using direct openssl command (wrapper not available at {openssl_wrapper})")
+    
+    # Add environment variables to help user-level installations
+    env = os.environ.copy()
+    env['HOME'] = session['home_dir']  
+    env['PYTHONUSERBASE'] = os.path.join(session['home_dir'], '.local')
+    env['PATH'] = os.path.join(session['home_dir'], '.local', 'bin') + ':' + env.get('PATH', '')
+    env['USER'] = 'terminal-user'  # Provide a username for commands that need it
+    env['OPENSSL_PASSPHRASE'] = 'termux_secure_passphrase'  # Default passphrase for OpenSSL operations
+    
+    # Source .profile instead of just .bashrc to get all environment variables
+    profile_path = os.path.join(session['home_dir'], '.profile')
+    if os.path.exists(profile_path):
+        source_cmd = f"source {profile_path}"
+    else:
+        source_cmd = "source .bashrc 2>/dev/null || true"
+    
+    # Execute command with bash to ensure profile or bashrc is sourced
+    full_command = f'cd {session["home_dir"]} && {source_cmd}; {command}'
+    
+    try:
+        # Track if we need to update working directory
+        update_working_dir = command.strip() == 'pwd' or command.strip().startswith('cd ')
+        
+        # Start process in its own process group with stdout and stderr piped
+        process = subprocess.Popen(
+            full_command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,  # Line buffered
+            cwd=session['home_dir'],
+            env=env,
+            preexec_fn=os.setsid  # Create new process group
+        )
+        
+        # Store process information
+        socket_processes[session_id] = {
+            'process': process,
+            'start_time': time.time()
+        }
+        
+        # Stream output in a separate thread to avoid blocking
+        def stream_output():
+            try:
+                # File descriptors for select
+                fd_stdout = process.stdout.fileno()
+                fd_stderr = process.stderr.fileno()
+                readable = [fd_stdout, fd_stderr]
+                
+                # Buffer for output
+                stdout_buffer = ""
+                stderr_buffer = ""
+                
+                # Stream output while process is running
+                while process.poll() is None:
+                    # Check for available output using select with timeout
+                    ready, _, _ = select.select(readable, [], [], 0.1)
+                    
+                    if fd_stdout in ready:
+                        output = os.read(fd_stdout, 1024).decode('utf-8', errors='replace')
+                        if output:
+                            # Emit output to client
+                            socketio.emit('command_output', {'output': output}, to=request.sid)
+                            stdout_buffer += output
+                    
+                    if fd_stderr in ready:
+                        error = os.read(fd_stderr, 1024).decode('utf-8', errors='replace')
+                        if error:
+                            # Emit error to client
+                            socketio.emit('command_output', {'output': error}, to=request.sid)
+                            stderr_buffer += error
+                
+                # Get any remaining output
+                stdout_remainder = process.stdout.read()
+                if stdout_remainder:
+                    socketio.emit('command_output', {'output': stdout_remainder}, to=request.sid)
+                    stdout_buffer += stdout_remainder
+                
+                stderr_remainder = process.stderr.read()
+                if stderr_remainder:
+                    socketio.emit('command_output', {'output': stderr_remainder}, to=request.sid)
+                    stderr_buffer += stderr_remainder
+                
+                # Process finished
+                exit_code = process.wait()
+                
+                # Clean up process tracking
+                if session_id in socket_processes:
+                    del socket_processes[session_id]
+                
+                # Update working directory if needed
+                if update_working_dir and exit_code == 0:
+                    try:
+                        if command.strip() == 'pwd':
+                            # Extract working directory from output
+                            if stdout_buffer:
+                                working_dir = stdout_buffer.strip()
+                                socketio.emit('working_directory', {'path': working_dir}, to=request.sid)
+                        elif command.strip().startswith('cd '):
+                            # Get working directory after cd command
+                            pwd_process = subprocess.Popen(
+                                f'cd {session["home_dir"]} && {source_cmd}; pwd',
+                                shell=True,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                cwd=session['home_dir'],
+                                env=env
+                            )
+                            pwd_output, _ = pwd_process.communicate(timeout=5)
+                            if pwd_output:
+                                working_dir = pwd_output.strip()
+                                socketio.emit('working_directory', {'path': working_dir}, to=request.sid)
+                    except Exception as e:
+                        print(f"Error updating working directory: {str(e)}")
+                
+                # Send command completion event
+                socketio.emit('command_complete', {
+                    'exitCode': exit_code,
+                    'sessionRenewed': auto_renewed,
+                    'newSessionId': session_id if auto_renewed else None,
+                    'workingDirectory': None  # Would be set by working_directory event
+                }, to=request.sid)
+                
+            except Exception as e:
+                print(f"Error in stream_output thread: {str(e)}")
+                socketio.emit('command_error', {
+                    'error': f"Error streaming command output: {str(e)}",
+                    'sessionRenewed': auto_renewed,
+                    'newSessionId': session_id if auto_renewed else None
+                }, to=request.sid)
+        
+        # Start output streaming in a separate thread
+        threading.Thread(target=stream_output, daemon=True).start()
+        
+    except Exception as e:
+        print(f"Error executing command: {str(e)}")
+        socketio.emit('command_error', {
+            'error': f"Failed to execute command: {str(e)}",
+            'sessionRenewed': auto_renewed,
+            'newSessionId': session_id if auto_renewed else None
+        }, to=request.sid)
+
+# Route to serve WebSocket terminal page
+@app.route('/ws')
+@cached_response(timeout=3600)  # Cache for 1 hour
+def websocket_terminal():
+    """Serve WebSocket terminal interface"""
+    return send_file('static/socket-terminal.html')
 
 # In-memory cache for responses
 response_cache = {}

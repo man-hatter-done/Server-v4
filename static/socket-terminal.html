@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Terminal (WebSocket)</title>
+    <link rel="stylesheet" href="style-v2.css">
+</head>
+<body data-theme="dark">
+    <div class="main-container">
+        <header class="header">
+            <h1>Real-Time Terminal</h1>
+            <div class="status-container">
+                <div id="status-indicator" class="status-indicator connecting">Connecting...</div>
+                <div id="progress-bar" class="progress-bar"></div>
+            </div>
+            <button id="mobile-menu-btn" class="mobile-menu-btn">☰</button>
+        </header>
+        
+        <div class="content-container">
+            <div class="terminal-container">
+                <div id="terminal-output" class="terminal-output"></div>
+                
+                <div class="command-line">
+                    <div id="prompt-text" class="prompt-text">~ $</div>
+                    <input id="command-input" type="text" class="command-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type commands here...">
+                </div>
+            </div>
+            
+            <div class="control-panel">
+                <h3>Session Info</h3>
+                <div class="session-info">
+                    <div class="info-row">
+                        <span class="info-label">Session ID:</span>
+                        <span id="session-id" class="info-value">Not connected</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Created:</span>
+                        <span id="session-created" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Last Activity:</span>
+                        <span id="session-last-activity" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Expires in:</span>
+                        <span id="session-expires" class="info-value">-</span>
+                    </div>
+                </div>
+                
+                <h3>Controls</h3>
+                <div class="button-group">
+                    <button id="new-session-btn" class="control-btn primary-btn">New Session</button>
+                    <button id="clear-terminal-btn" class="control-btn">Clear Terminal</button>
+                    <button id="end-session-btn" class="control-btn danger-btn">End Session</button>
+                </div>
+                
+                <h3>Settings</h3>
+                <div class="settings-group">
+                    <div class="setting-row">
+                        <label for="theme-selector">Theme:</label>
+                        <select id="theme-selector" class="setting-control">
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                            <option value="hacker">Hacker</option>
+                            <option value="retro">Retro</option>
+                        </select>
+                    </div>
+                    <div class="setting-row">
+                        <label for="font-size-selector">Font Size:</label>
+                        <select id="font-size-selector" class="setting-control">
+                            <option value="12">Small</option>
+                            <option value="14">Medium</option>
+                            <option value="16">Large</option>
+                            <option value="18">X-Large</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="about-section">
+                    <h3>About</h3>
+                    <p>Real-Time Terminal with WebSocket support</p>
+                    <p>Version: 2.0.0</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Socket.IO Client Library -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    
+    <!-- Terminal JavaScript -->
+    <script src="socket-terminal.js"></script>
+</body>
+</html>
