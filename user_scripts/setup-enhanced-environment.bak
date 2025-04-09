@@ -1,0 +1,366 @@
+#!/bin/bash
+# Enhanced environment setup script that fixes common issues and adds powerful features
+
+# Define colors for better output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}Setting up enhanced terminal environment...${NC}"
+
+# Create necessary directories
+mkdir -p "$HOME/.local/bin"
+mkdir -p "$HOME/.config"
+mkdir -p "$HOME/.ssl"
+mkdir -p "$HOME/.pkg"
+
+# Fix PATH to ensure local bins are available
+cat > "$HOME/.profile" << 'EOF_PROFILE'
+# Add local bin directory to PATH
+export PATH="$HOME/.local/bin:$PATH"
+
+# Set environment variables for better compatibility
+export LANG=en_US.UTF-8
+export PYTHONIOENCODING=utf-8
+export PYTHONUNBUFFERED=1
+export TERM=xterm-256color
+
+# Setup for interactive commands
+export INTERACTIVE_COMMAND_SUPPORT=1
+
+# Setup for OpenSSL
+export OPENSSL_PASSPHRASE="termux_secure_passphrase"
+EOF_PROFILE
+
+# Source the profile to make sure PATH is updated
+source "$HOME/.profile"
+
+# Setup colored prompt and aliases in .bashrc
+if [ -f "$HOME/.bashrc" ]; then
+  if ! grep -q "COLOR_PROMPT" "$HOME/.bashrc"; then
+    cat >> "$HOME/.bashrc" << 'EOF_BASHRC'
+
+# COLOR_PROMPT: Enable colored prompt for better usability
+PS1='\[\033[01;32m\]\u@terminal\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+
+# Useful aliases
+alias ls='ls --color=auto'
+alias ll='ls -la'
+alias grep='grep --color=auto'
+EOF_BASHRC
+  fi
+else
+  # Create .bashrc if it doesn't exist
+  cat > "$HOME/.bashrc" << 'EOF_BASHRC'
+# ~/.bashrc: executed by bash for non-login shells
+
+# Enable colored prompt
+PS1='\[\033[01;32m\]\u@terminal\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+
+# Useful aliases
+alias ls='ls --color=auto'
+alias ll='ls -la'
+alias grep='grep --color=auto'
+EOF_BASHRC
+fi
+
+# Setup OpenSSL wrapper
+OPENSSL_WRAPPER="/app/user_scripts/openssl-wrapper"
+if [ -f "$OPENSSL_WRAPPER" ]; then
+  cp "$OPENSSL_WRAPPER" "$HOME/.local/bin/"
+  chmod +x "$HOME/.local/bin/openssl-wrapper"
+  echo -e "${GREEN}Installed:${NC} openssl-wrapper"
+fi
+
+# Add the enhanced terminal command wrappers
+if [ -f "/app/enhanced-terminal.tar.gz" ]; then
+  echo -e "${YELLOW}Installing enhanced terminal commands...${NC}"
+  
+  # Extract enhanced terminal package
+  TEMP_DIR=$(mktemp -d)
+  tar -xzf /app/enhanced-terminal.tar.gz -C "$TEMP_DIR"
+  
+  # Copy all wrappers to .local/bin
+  for category in "$TEMP_DIR/wrappers/"*/; do
+    if [ -d "$category" ]; then
+      category_name=$(basename "$category")
+      echo -e "${YELLOW}Setting up $category_name commands...${NC}"
+      
+      for cmd in "$category"/*; do
+        if [ -f "$cmd" ]; then
+          cp "$cmd" "$HOME/.local/bin/"
+          chmod +x "$HOME/.local/bin/$(basename "$cmd")"
+          echo -e "  ${GREEN}Installed:${NC} $(basename "$cmd")"
+        fi
+      done
+    fi
+  done
+  
+  # Clean up
+  rm -rf "$TEMP_DIR"
+fi
+
+# Set up pkginstall helper
+cat > "$HOME/.local/bin/pkg" << 'EOF_PKG'
+#!/bin/bash
+# Package installation simulator
+
+PKG_DB="$HOME/.pkg/installed.txt"
+PKG_AVAILABLE="$HOME/.pkg/available.txt"
+
+mkdir -p "$HOME/.pkg"
+
+# Create available packages file if it doesn't exist
+if [ ! -f "$PKG_AVAILABLE" ]; then
+  cat > "$PKG_AVAILABLE" << 'PKGAVAIL'
+python3|Development|Python programming language
+nodejs|Development|JavaScript runtime
+gcc|Development|C/C++ compiler
+git|Development|Version control system
+vim|Editors|Improved vi editor
+nano|Editors|Simple editor
+wget|Network|Download utility
+curl|Network|Transfer data from/to servers
+PKGAVAIL
+fi
+
+# Create installed packages file if it doesn't exist
+if [ ! -f "$PKG_DB" ]; then
+  echo "python3" > "$PKG_DB"
+  echo "nano" >> "$PKG_DB"
+fi
+
+# Display help
+if [ "$#" -lt 1 ] || [ "$1" == "help" ]; then
+  echo -e "\033[0;34mPackage Management\033[0m"
+  echo
+  echo "Usage: pkg COMMAND [arguments]"
+  echo
+  echo "Commands:"
+  echo "  install PKG      Install package"
+  echo "  remove PKG       Remove package"
+  echo "  list-installed   List installed packages"
+  echo "  update           Update package database"
+  echo "  search TERM      Search for packages"
+  echo
+  exit 0
+fi
+
+command="$1"
+shift
+
+case "$command" in
+  install)
+    if [ "$#" -lt 1 ]; then
+      echo -e "\033[1;31mError:\033[0m No package specified"
+      exit 1
+    fi
+    
+    for pkg in "$@"; do
+      # Check if already installed
+      if grep -q "
+^
+$pkg$" "$PKG_DB" 2>/dev/null; then
+        echo -e "\033[1;33mPackage '$pkg' is already installed\033[0m"
+        continue
+      fi
+      
+      # Check if in available packages
+      if grep -q "
+^
+$pkg|" "$PKG_AVAILABLE" 2>/dev/null; then
+        echo -e "\033[0;32mInstalling $pkg...\033[0m"
+        sleep 1
+        echo "$pkg" >> "$PKG_DB"
+        echo -e "\033[0;32mInstallation complete\033[0m"
+      else
+        echo -e "\033[1;31mError:\033[0m Package '$pkg' not found"
+      fi
+    done
+    ;;
+    
+  remove)
+    if [ "$#" -lt 1 ]; then
+      echo -e "\033[1;31mError:\033[0m No package specified"
+      exit 1
+    fi
+    
+    for pkg in "$@"; do
+      # Check if installed
+      if grep -q "
+^
+$pkg$" "$PKG_DB" 2>/dev/null; then
+        echo -e "\033[0;32mRemoving $pkg...\033[0m"
+        grep -v "
+^
+$pkg$" "$PKG_DB" > "$PKG_DB.tmp"
+        mv "$PKG_DB.tmp" "$PKG_DB"
+        echo -e "\033[0;32mRemoval complete\033[0m"
+      else
+        echo -e "\033[1;31mError:\033[0m Package '$pkg' is not installed"
+      fi
+    done
+    ;;
+    
+  list-installed)
+    echo -e "\033[0;34mInstalled packages:\033[0m"
+    cat "$PKG_DB" | while read pkg; do
+      description=$(grep "
+^
+$pkg|" "$PKG_AVAILABLE" | cut -d'|' -f3)
+      if [ -n "$description" ]; then
+        echo -e "\033[0;32m$pkg\033[0m - $description"
+      else
+        echo -e "\033[0;32m$pkg\033[0m"
+      fi
+    done
+    ;;
+    
+  update)
+    echo -e "\033[0;32mUpdating package database...\033[0m"
+    sleep 1
+    echo -e "\033[0;32mPackage database updated\033[0m"
+    ;;
+    
+  search)
+    if [ "$#" -lt 1 ]; then
+      echo -e "\033[1;31mError:\033[0m No search term specified"
+      exit 1
+    fi
+    
+    term="$1"
+    echo -e "\033[0;34mPackages matching '$term':\033[0m"
+    
+    grep -i "$term" "$PKG_AVAILABLE" | while IFS='|' read -r name category description; do
+      if grep -q "
+^
+$name$" "$PKG_DB" 2>/dev/null; then
+        echo -e "\033[0;32m$name\033[0m [$category] - $description (installed)"
+      else
+        echo -e "\033[0;32m$name\033[0m [$category] - $description"
+      fi
+    done
+    ;;
+    
+  *)
+    echo -e "\033[1;31mError:\033[0m Unknown command '$command'"
+    echo "Try 'pkg help' for usage information"
+    exit 1
+    ;;
+esac
+EOF_PKG
+chmod +x "$HOME/.local/bin/pkg"
+
+# Setup session keep-alive
+cat > "$HOME/.local/bin/session-keep-alive" << 'EOF_KEEPALIVE'
+#!/bin/bash
+# Keep session alive by sending a command periodically
+echo "Starting session keep-alive. Press Ctrl+C to stop."
+while true; do
+  echo -n "." > /dev/null
+  sleep 60
+done
+EOF_KEEPALIVE
+chmod +x "$HOME/.local/bin/session-keep-alive"
+
+# Setup help command
+cat > "$HOME/.local/bin/help" << 'EOF_HELP'
+#!/bin/bash
+# Enhanced help system
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+if [ "$#" -eq 0 ]; then
+  # Display general help
+  echo -e "${BLUE}Enhanced Terminal Environment - Help${NC}"
+  echo
+  echo -e "${YELLOW}File Operations:${NC}"
+  echo "  ls, ll          - List files (with color)"
+  echo "  cd              - Change directory"
+  echo "  mkdir           - Create directory"
+  echo "  touch           - Create empty file"
+  echo
+  echo -e "${YELLOW}Text Editors:${NC}"
+  echo "  nano            - Simple text editor"
+  echo "  cat, less       - View file contents"
+  echo
+  echo -e "${YELLOW}Package Management:${NC}"
+  echo "  pkg install     - Install packages"
+  echo "  pkg remove      - Remove packages"
+  echo "  pkg list-installed - List installed packages"
+  echo
+  echo -e "${YELLOW}Cryptography:${NC}"
+  echo "  openssl         - OpenSSL with password handling"
+  echo
+  echo -e "${YELLOW}Utilities:${NC}"
+  echo "  session-keep-alive - Prevent session timeouts"
+  echo
+  echo -e "For more details, use ${GREEN}help COMMAND${NC}"
+else
+  # Display help for specific command
+  case "$1" in
+    ls)
+      echo -e "${BLUE}ls - List directory contents${NC}"
+      echo
+      echo "Usage: ls [OPTIONS] [FILE]..."
+      echo
+      echo "Options:"
+      echo "  -l    Use a long listing format"
+      echo "  -a    Do not ignore entries starting with ."
+      echo "  -h    Human-readable sizes"
+      ;;
+    pkg)
+      echo -e "${BLUE}pkg - Package management${NC}"
+      echo
+      echo "Usage: pkg COMMAND [arguments]"
+      echo
+      echo "Commands:"
+      echo "  install PKG      Install package"
+      echo "  remove PKG       Remove package"
+      echo "  list-installed   List installed packages"
+      echo "  update           Update package database"
+      echo "  search TERM      Search for packages"
+      ;;
+    *)
+      echo -e "${BLUE}Help for: $1${NC}"
+      echo
+      if command -v "$1" &>/dev/null; then
+        echo "This is an available command. Try running with --help:"
+        echo "  $1 --help"
+      else
+        echo "Command not found. Use 'help' for a list of available commands."
+      fi
+      ;;
+  esac
+fi
+EOF_HELP
+chmod +x "$HOME/.local/bin/help"
+
+# Display setup completion message
+cat << 'EOF_MESSAGE'
+-----------------------------------------------------------
+ Enhanced Terminal Environment - Setup Complete
+-----------------------------------------------------------
+
+ The following features are now available:
+
+ - Color-enabled commands (ls, grep)
+ - Package management with pkg
+ - Enhanced help system (type 'help')
+ - OpenSSL wrapper with better password handling
+ - Session keep-alive to prevent timeouts
+
+ To get started, try:
+   help                  - Show available commands
+   pkg list-installed    - Show installed packages
+   session-keep-alive &  - Keep your session active
+
+-----------------------------------------------------------
+EOF_MESSAGE
+
+echo -e "${GREEN}Enhanced environment setup complete!${NC}"

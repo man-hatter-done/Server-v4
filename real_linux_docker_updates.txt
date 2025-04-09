@@ -1,0 +1,34 @@
+# Packages to add to Dockerfile.flask for real Linux functionality
+RUN apt-get update && apt-get install -y \
+    nano \
+    vim \
+    curl \
+    wget \
+    git \
+    zip \
+    unzip \
+    procps \
+    htop \
+    net-tools \
+    iproute2 \
+    dnsutils \
+    traceroute \
+    iputils-ping \
+    bash-completion \
+    man-db \
+    less \
+    locales \
+    lsof \
+    ncdu \
+    sudo \
+    tree \
+    rsync \
+    openssh-client \
+    python3-pip \
+    python3-venv
+
+# Set up locale
+RUN locale-gen en_US.UTF-8
+ENV LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8

@@ -1,0 +1,7 @@
+#!/bin/bash
+# Enhanced ls with color support
+if command -v /bin/ls >/dev/null 2>&1; then
+  /bin/ls --color=auto "$@"
+else
+  ls "$@"
+fi

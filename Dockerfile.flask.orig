@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 
-# Install real Linux utilities and development tools
+# Update and install dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     gcc \
@@ -25,33 +25,8 @@ RUN apt-get update && apt-get install -y \
     tar \
     gzip \
     wget \
-    # Real Linux utilities
-    procps \
-    htop \
-    net-tools \
-    iproute2 \
-    dnsutils \
-    traceroute \
-    iputils-ping \
-    bash-completion \
-    man-db \
-    less \
-    locales \
-    lsof \
-    tree \
-    rsync \
-    zip \
-    unzip \
-    python3-pip \
-    python3-venv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-# Set up locale for proper UTF-8 support
-RUN locale-gen en_US.UTF-8
-ENV LANG=en_US.UTF-8 \
-    LANGUAGE=en_US:en \
-    LC_ALL=en_US.UTF-8
 
 # Set up work directory
 WORKDIR /app
@@ -62,7 +37,7 @@ RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir gunicorn
 
-# Add www-data to sudoers (needed for some operations)
+# Add www-data to sudoers (needed for some operations in the container)
 RUN echo "www-data ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/www-data-sudo && \
     chmod 0440 /etc/sudoers.d/www-data-sudo
 
@@ -70,6 +45,12 @@ RUN echo "www-data ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/www-data-sudo && \
 COPY flask_server.py .
 COPY file_management.py .
 COPY static/ ./static/
+# Copy enhanced terminal package
+COPY enhanced-terminal.tar.gz .
+
+
+# Copy enhanced terminal package
+COPY enhanced-terminal.tar.gz .
 
 # Create directories and add user scripts
 COPY user_scripts/ ./user_scripts/
