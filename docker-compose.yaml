@@ -12,7 +12,15 @@ services:
       - PORT=3000
       - SESSION_TIMEOUT=3600
       - USE_AUTH=false
+      - COMMAND_TIMEOUT=300
+      - ENABLE_SYSTEM_COMMANDS=true
     volumes:
       - ./user_data:/app/user_data
       - ./logs:/app/logs
+      - ./user_scripts:/app/user_scripts
     restart: unless-stopped
+    # Add necessary capabilities for enhanced functionality
+    cap_add:
+      - SYS_PTRACE  # Allows process tracing needed for some developer tools
+    security_opt:
+      - seccomp=unconfined  # Less restrictive security profile for better compatibility
