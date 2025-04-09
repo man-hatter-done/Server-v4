@@ -412,33 +412,50 @@ fi
         
         # Set up enhanced environment using our new script if available
         setup_script = os.path.join(user_bin_dir, 'setup-enhanced-environment')
-        if os.path.exists(os.path.join(scripts_dir, 'setup-enhanced-environment')):
-            # Check if the symlink already exists - handle it properly to avoid conflicts
+        source_script_path = os.path.join(os.getcwd(), scripts_dir, 'setup-enhanced-environment')
+        
+        # Use absolute paths to avoid relative path issues
+        if os.path.isfile(source_script_path):
+            # First, ensure the source script has execute permissions
             try:
-                if os.path.exists(setup_script):
-                    # If it's already a symlink, we're good - if not, remove and recreate
-                    if not os.path.islink(setup_script):
-                        os.remove(setup_script)
-                        os.symlink(os.path.join(scripts_dir, 'setup-enhanced-environment'), setup_script)
-                else:
-                    # Create symbolic link to the setup script if it doesn't exist
-                    os.symlink(os.path.join(scripts_dir, 'setup-enhanced-environment'), setup_script)
+                os.chmod(source_script_path, 0o755)
+            except Exception as e:
+                print(f"Warning: Could not set execute permission on source script: {str(e)}")
+                
+            # Now handle the target script setup
+            try:
+                # Make a copy instead of a symlink to avoid path issues
+                with open(source_script_path, 'rb') as src_file:
+                    script_content = src_file.read()
+                
+                # Write directly to the destination
+                with open(setup_script, 'wb') as dest_file:
+                    dest_file.write(script_content)
                 
                 # Ensure permissions are correct
                 os.chmod(setup_script, 0o755)
                 
+                # Log the successful setup
+                print(f"Setup script created at {setup_script}")
+                
                 # Run the setup script in the background for this user
-                # Use nohup and background process to avoid blocking
-                subprocess.Popen(
-                    f"cd {home_dir} && bash {setup_script} > {home_dir}/.setup.log 2>&1 &",
-                    shell=True,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True
-                )
+                # Use a safer approach that doesn't rely on the symlink
+                try:
+                    subprocess.Popen(
+                        f"cd {home_dir} && bash {setup_script} > {home_dir}/.setup.log 2>&1 &",
+                        shell=True,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True
+                    )
+                    print(f"Setup script executed for {home_dir}")
+                except Exception as e:
+                    print(f"Warning: Failed to execute setup script: {str(e)}")
             except Exception as e:
                 print(f"Warning: Failed to setup enhanced environment: {str(e)}")
+        else:
+            print(f"Warning: Enhanced environment setup script not found at {source_script_path}")
         
         # Set up the pkg command if not already present
         pkg_dest = os.path.join(user_bin_dir, 'pkg')
