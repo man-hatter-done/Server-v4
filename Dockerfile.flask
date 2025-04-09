@@ -101,5 +101,8 @@ RUN chown -R www-data:www-data user_data logs
 # Expose the port
 EXPOSE 3000
 
-# Start using gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:3000", "--workers", "2", "--threads", "4", "flask_server:app"]
+# Start using gunicorn with optimized settings
+# Increase workers to 4-8 based on available CPUs (adjust as needed)
+# Increase threads per worker to 8
+# Add worker_class, worker_connections, keep-alive and timeout settings for better performance
+CMD ["gunicorn", "--bind", "0.0.0.0:3000", "--workers", "6", "--threads", "8", "--worker-class", "gthread", "--worker-connections", "1000", "--timeout", "60", "--keep-alive", "5", "--max-requests", "1000", "--max-requests-jitter", "200", "flask_server:app"]

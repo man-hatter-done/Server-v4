@@ -5,9 +5,41 @@ These endpoints provide a RESTful interface for managing files and directories.
 
 import os
 import shutil
+import time
 from datetime import datetime
-from flask import jsonify, request, send_file
+from functools import lru_cache
+from flask import jsonify, request, send_file, make_response
 from werkzeug.utils import secure_filename
+
+# Path cache to avoid repeated disk stats for directories that rarely change
+# Keyed by (session_id, path) and stores the directory listing with a timestamp
+path_cache = {}
+PATH_CACHE_TIMEOUT = 10  # 10 seconds cache for directory listings
+PATH_CACHE_SIZE = 100    # Maximum number of cached directory listings
+
+@lru_cache(maxsize=100)
+def get_directory_stats(dir_path, last_modified=None):
+    """Get directory stats with caching based on last modification time"""
+    # If last_modified is None or the directory has been changed, recalculate
+    if last_modified is None or os.path.getmtime(dir_path) > last_modified:
+        last_modified = os.path.getmtime(dir_path)
+        item_stats = []
+        for item in os.listdir(dir_path):
+            item_path = os.path.join(dir_path, item)
+            try:
+                item_stat = os.stat(item_path)
+                item_stats.append({
+                    'name': item,
+                    'path': item_path,
+                    'is_dir': os.path.isdir(item_path),
+                    'size': item_stat.st_size,
+                    'modified': datetime.fromtimestamp(item_stat.st_mtime).isoformat()
+                })
+            except (FileNotFoundError, PermissionError):
+                # Skip files that can't be accessed
+                pass
+        return item_stats, last_modified
+    return None, last_modified
 
 def register_file_management_endpoints(app, get_session):
     """
@@ -21,6 +53,7 @@ def register_file_management_endpoints(app, get_session):
     @app.route('/files', methods=['GET'])
     def list_files():
         """List files and directories in a path relative to the user's home directory"""
+        start_time = time.time()
         session_id = request.headers.get('X-Session-Id')
         if not session_id:
             return jsonify({'error': 'Session ID is required'}), 400
@@ -44,29 +77,69 @@ def register_file_management_endpoints(app, get_session):
                 
             if os.path.isfile(target_path):
                 return jsonify({'error': 'Path is a file, not a directory'}), 400
-                
+            
+            # Check if we have a valid cached response
+            cache_key = (session_id, path)
+            current_time = time.time()
+            
+            if (cache_key in path_cache and 
+                current_time - path_cache[cache_key]['timestamp'] < PATH_CACHE_TIMEOUT):
+                # Use cached directory listing
+                result = path_cache[cache_key]['data']
+                response = jsonify(result)
+                # Add performance header for debugging
+                response.headers['X-Cache'] = 'HIT'
+                response.headers['X-Response-Time'] = f"{(time.time() - start_time):.4f}s"
+                return response
+            
+            # Not in cache or expired, get fresh listing
             files = []
-            for item in os.listdir(target_path):
-                item_path = os.path.join(target_path, item)
-                item_stat = os.stat(item_path)
-                files.append({
-                    'name': item,
-                    'path': os.path.relpath(item_path, base_dir),
-                    'is_dir': os.path.isdir(item_path),
-                    'size': item_stat.st_size,
-                    'modified': datetime.fromtimestamp(item_stat.st_mtime).isoformat()
-                })
-                
-            return jsonify({
+            dir_items, last_modified = get_directory_stats(target_path, None)
+            
+            for item in dir_items:
+                item['path'] = os.path.relpath(item['path'], base_dir)
+                files.append(item)
+            
+            result = {
                 'path': path,
                 'files': files
-            })
+            }
+            
+            # Store in cache with timestamp
+            path_cache[cache_key] = {
+                'data': result,
+                'timestamp': current_time
+            }
+            
+            # Keep cache size under control
+            if len(path_cache) > PATH_CACHE_SIZE:
+                # Remove oldest entries
+                oldest = sorted(
+                    path_cache.items(), 
+                    key=lambda x: x[1]['timestamp']
+                )[:len(path_cache) - PATH_CACHE_SIZE]
+                
+                for key, _ in oldest:
+                    del path_cache[key]
+            
+            # Add performance headers
+            response = jsonify(result)
+            response.headers['X-Cache'] = 'MISS'
+            response.headers['X-Response-Time'] = f"{(time.time() - start_time):.4f}s"
+            return response
+            
         except Exception as e:
             return jsonify({'error': f'Failed to list files: {str(e)}'}), 500
 
+    # Simple cache for small files - don't cache large files
+    small_file_cache = {}
+    SMALL_FILE_CACHE_SIZE = 50     # Maximum number of files to cache
+    SMALL_FILE_MAX_SIZE = 1024*128 # Only cache files under 128KB
+    
     @app.route('/files/download', methods=['GET'])
     def download_file():
         """Download a file from the user's directory"""
+        start_time = time.time()
         session_id = request.headers.get('X-Session-Id')
         if not session_id:
             return jsonify({'error': 'Session ID is required'}), 400
@@ -78,6 +151,9 @@ def register_file_management_endpoints(app, get_session):
         path = request.args.get('path', '')
         if not path:
             return jsonify({'error': 'Path is required'}), 400
+        
+        # Get content type header if any
+        content_type = request.args.get('content_type', None)
             
         # Sanitize path to prevent path traversal
         base_dir = session['home_dir']
@@ -93,8 +169,76 @@ def register_file_management_endpoints(app, get_session):
                 
             if not os.path.isfile(target_path):
                 return jsonify({'error': 'Path is not a file'}), 400
+            
+            # Check file size for caching decision
+            file_size = os.path.getsize(target_path)
+            file_mtime = os.path.getmtime(target_path)
+            cache_key = f"{session_id}:{path}"
+            
+            # For small text files, we use caching
+            if file_size <= SMALL_FILE_MAX_SIZE and path.endswith(('.txt', '.md', '.json', '.yml', '.yaml', '.csv', '.log')):
+                # Check if we have it cached and the mtime hasn't changed
+                if (cache_key in small_file_cache and 
+                    small_file_cache[cache_key]['mtime'] == file_mtime):
+                    # Use cached file data
+                    file_data = small_file_cache[cache_key]['data']
+                    mimetype = small_file_cache[cache_key]['mimetype']
+                    
+                    response = make_response(file_data)
+                    response.headers['Content-Type'] = mimetype
+                    response.headers['Content-Disposition'] = f'attachment; filename="{os.path.basename(target_path)}"'
+                    response.headers['X-Cache'] = 'HIT'
+                    response.headers['X-Response-Time'] = f"{(time.time() - start_time):.4f}s"
+                    return response
                 
-            return send_file(target_path, as_attachment=True)
+                # Not in cache or modified - read the file
+                with open(target_path, 'rb') as f:
+                    file_data = f.read()
+                
+                # Determine mime type based on extension
+                mimetype = content_type or 'application/octet-stream'
+                if path.endswith('.txt'):
+                    mimetype = 'text/plain'
+                elif path.endswith('.json'):
+                    mimetype = 'application/json'
+                elif path.endswith('.md'):
+                    mimetype = 'text/markdown'
+                elif path.endswith('.csv'):
+                    mimetype = 'text/csv'
+                elif path.endswith(('.yml', '.yaml')):
+                    mimetype = 'application/x-yaml'
+                
+                # Store in cache
+                small_file_cache[cache_key] = {
+                    'data': file_data,
+                    'mtime': file_mtime,
+                    'mimetype': mimetype
+                }
+                
+                # Trim cache if needed
+                if len(small_file_cache) > SMALL_FILE_CACHE_SIZE:
+                    # Remove oldest accessed entries
+                    keys_to_remove = list(small_file_cache.keys())[:-SMALL_FILE_CACHE_SIZE]
+                    for key in keys_to_remove:
+                        del small_file_cache[key]
+                
+                # Return optimized response
+                response = make_response(file_data)
+                response.headers['Content-Type'] = mimetype
+                response.headers['Content-Disposition'] = f'attachment; filename="{os.path.basename(target_path)}"'
+                response.headers['X-Cache'] = 'MISS'
+                response.headers['X-Response-Time'] = f"{(time.time() - start_time):.4f}s"
+                return response
+            
+            # For larger or binary files, use the standard send_file
+            response = send_file(
+                target_path, 
+                as_attachment=True,
+                mimetype=content_type
+            )
+            response.headers['X-Response-Time'] = f"{(time.time() - start_time):.4f}s"
+            return response
+            
         except Exception as e:
             return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
 
