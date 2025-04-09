@@ -15,3 +15,5 @@ services:
         value: false  # Set to true if you want to require API key
       - key: API_KEY
         sync: false   # Will be generated if not provided
+      - key: REAL_LINUX_TERMINAL
+        value: true   # Enable the real Linux terminal

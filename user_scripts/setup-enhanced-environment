@@ -1,5 +1,5 @@
 #!/bin/bash
-# Enhanced environment setup script that fixes common issues and adds powerful features
+# Real Linux Terminal Environment Setup
 
 # Define colors for better output
 GREEN='\033[0;32m'
@@ -8,359 +8,483 @@ BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}Setting up enhanced terminal environment...${NC}"
+echo -e "${BLUE}Setting up Real Linux Terminal Environment...${NC}"
 
 # Create necessary directories
 mkdir -p "$HOME/.local/bin"
 mkdir -p "$HOME/.config"
-mkdir -p "$HOME/.ssl"
-mkdir -p "$HOME/.pkg"
+mkdir -p "$HOME/.ssh"
+mkdir -p "$HOME/.cache"
 
-# Fix PATH to ensure local bins are available
-cat > "$HOME/.profile" << 'EOF_PROFILE'
-# Add local bin directory to PATH
-export PATH="$HOME/.local/bin:$PATH"
+# Set up enhanced bash configuration
+cat > "$HOME/.bashrc" << 'BASHRC'
+# Enhanced Bash Configuration for Real Linux Terminal
 
-# Set environment variables for better compatibility
-export LANG=en_US.UTF-8
-export PYTHONIOENCODING=utf-8
-export PYTHONUNBUFFERED=1
-export TERM=xterm-256color
-
-# Setup for interactive commands
-export INTERACTIVE_COMMAND_SUPPORT=1
-
-# Setup for OpenSSL
-export OPENSSL_PASSPHRASE="termux_secure_passphrase"
-EOF_PROFILE
-
-# Source the profile to make sure PATH is updated
-source "$HOME/.profile"
-
-# Setup colored prompt and aliases in .bashrc
-if [ -f "$HOME/.bashrc" ]; then
-  if ! grep -q "COLOR_PROMPT" "$HOME/.bashrc"; then
-    cat >> "$HOME/.bashrc" << 'EOF_BASHRC'
-
-# COLOR_PROMPT: Enable colored prompt for better usability
-PS1='\[\033[01;32m\]\u@terminal\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-
-# Useful aliases
-alias ls='ls --color=auto'
-alias ll='ls -la'
-alias grep='grep --color=auto'
-EOF_BASHRC
-  fi
-else
-  # Create .bashrc if it doesn't exist
-  cat > "$HOME/.bashrc" << 'EOF_BASHRC'
-# ~/.bashrc: executed by bash for non-login shells
-
-# Enable colored prompt
-PS1='\[\033[01;32m\]\u@terminal\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-
-# Useful aliases
-alias ls='ls --color=auto'
-alias ll='ls -la'
-alias grep='grep --color=auto'
-EOF_BASHRC
-fi
-
-# Setup OpenSSL wrapper
-OPENSSL_WRAPPER="/app/user_scripts/openssl-wrapper"
-if [ -f "$OPENSSL_WRAPPER" ]; then
-  cp "$OPENSSL_WRAPPER" "$HOME/.local/bin/"
-  chmod +x "$HOME/.local/bin/openssl-wrapper"
-  echo -e "${GREEN}Installed:${NC} openssl-wrapper"
-fi
-
-# Add the enhanced terminal command wrappers
-if [ -f "/app/enhanced-terminal.tar.gz" ]; then
-  echo -e "${YELLOW}Installing enhanced terminal commands...${NC}"
-  
-  # Extract enhanced terminal package
-  TEMP_DIR=$(mktemp -d)
-  tar -xzf /app/enhanced-terminal.tar.gz -C "$TEMP_DIR"
-  
-  # Copy all wrappers to .local/bin
-  for category in "$TEMP_DIR/wrappers/"*/; do
-    if [ -d "$category" ]; then
-      category_name=$(basename "$category")
-      echo -e "${YELLOW}Setting up $category_name commands...${NC}"
-      
-      for cmd in "$category"/*; do
-        if [ -f "$cmd" ]; then
-          cp "$cmd" "$HOME/.local/bin/"
-          chmod +x "$HOME/.local/bin/$(basename "$cmd")"
-          echo -e "  ${GREEN}Installed:${NC} $(basename "$cmd")"
-        fi
-      done
-    fi
-  done
-  
-  # Clean up
-  rm -rf "$TEMP_DIR"
-fi
-
-# Set up pkginstall helper
-cat > "$HOME/.local/bin/pkg" << 'EOF_PKG'
-#!/bin/bash
-# Package installation simulator
-
-PKG_DB="$HOME/.pkg/installed.txt"
-PKG_AVAILABLE="$HOME/.pkg/available.txt"
-
-mkdir -p "$HOME/.pkg"
-
-# Create available packages file if it doesn't exist
-if [ ! -f "$PKG_AVAILABLE" ]; then
-  cat > "$PKG_AVAILABLE" << 'PKGAVAIL'
-python3|Development|Python programming language
-nodejs|Development|JavaScript runtime
-gcc|Development|C/C++ compiler
-git|Development|Version control system
-vim|Editors|Improved vi editor
-nano|Editors|Simple editor
-wget|Network|Download utility
-curl|Network|Transfer data from/to servers
-PKGAVAIL
-fi
-
-# Create installed packages file if it doesn't exist
-if [ ! -f "$PKG_DB" ]; then
-  echo "python3" > "$PKG_DB"
-  echo "nano" >> "$PKG_DB"
-fi
-
-# Display help
-if [ "$#" -lt 1 ] || [ "$1" == "help" ]; then
-  echo -e "\033[0;34mPackage Management\033[0m"
-  echo
-  echo "Usage: pkg COMMAND [arguments]"
-  echo
-  echo "Commands:"
-  echo "  install PKG      Install package"
-  echo "  remove PKG       Remove package"
-  echo "  list-installed   List installed packages"
-  echo "  update           Update package database"
-  echo "  search TERM      Search for packages"
-  echo
-  exit 0
-fi
-
-command="$1"
-shift
-
-case "$command" in
-  install)
-    if [ "$#" -lt 1 ]; then
-      echo -e "\033[1;31mError:\033[0m No package specified"
-      exit 1
-    fi
-    
-    for pkg in "$@"; do
-      # Check if already installed
-      if grep -q "
-^
-$pkg$" "$PKG_DB" 2>/dev/null; then
-        echo -e "\033[1;33mPackage '$pkg' is already installed\033[0m"
-        continue
-      fi
-      
-      # Check if in available packages
-      if grep -q "
-^
-$pkg|" "$PKG_AVAILABLE" 2>/dev/null; then
-        echo -e "\033[0;32mInstalling $pkg...\033[0m"
-        sleep 1
-        echo "$pkg" >> "$PKG_DB"
-        echo -e "\033[0;32mInstallation complete\033[0m"
-      else
-        echo -e "\033[1;31mError:\033[0m Package '$pkg' not found"
-      fi
-    done
-    ;;
-    
-  remove)
-    if [ "$#" -lt 1 ]; then
-      echo -e "\033[1;31mError:\033[0m No package specified"
-      exit 1
-    fi
-    
-    for pkg in "$@"; do
-      # Check if installed
-      if grep -q "
-^
-$pkg$" "$PKG_DB" 2>/dev/null; then
-        echo -e "\033[0;32mRemoving $pkg...\033[0m"
-        grep -v "
-^
-$pkg$" "$PKG_DB" > "$PKG_DB.tmp"
-        mv "$PKG_DB.tmp" "$PKG_DB"
-        echo -e "\033[0;32mRemoval complete\033[0m"
-      else
-        echo -e "\033[1;31mError:\033[0m Package '$pkg' is not installed"
-      fi
-    done
-    ;;
-    
-  list-installed)
-    echo -e "\033[0;34mInstalled packages:\033[0m"
-    cat "$PKG_DB" | while read pkg; do
-      description=$(grep "
-^
-$pkg|" "$PKG_AVAILABLE" | cut -d'|' -f3)
-      if [ -n "$description" ]; then
-        echo -e "\033[0;32m$pkg\033[0m - $description"
-      else
-        echo -e "\033[0;32m$pkg\033[0m"
-      fi
-    done
-    ;;
-    
-  update)
-    echo -e "\033[0;32mUpdating package database...\033[0m"
-    sleep 1
-    echo -e "\033[0;32mPackage database updated\033[0m"
-    ;;
-    
-  search)
-    if [ "$#" -lt 1 ]; then
-      echo -e "\033[1;31mError:\033[0m No search term specified"
-      exit 1
-    fi
-    
-    term="$1"
-    echo -e "\033[0;34mPackages matching '$term':\033[0m"
-    
-    grep -i "$term" "$PKG_AVAILABLE" | while IFS='|' read -r name category description; do
-      if grep -q "
-^
-$name$" "$PKG_DB" 2>/dev/null; then
-        echo -e "\033[0;32m$name\033[0m [$category] - $description (installed)"
-      else
-        echo -e "\033[0;32m$name\033[0m [$category] - $description"
-      fi
-    done
-    ;;
-    
-  *)
-    echo -e "\033[1;31mError:\033[0m Unknown command '$command'"
-    echo "Try 'pkg help' for usage information"
-    exit 1
-    ;;
+# Check if shell is interactive
+case $- in
+    *i*) ;;
+      *) return;;
 esac
-EOF_PKG
-chmod +x "$HOME/.local/bin/pkg"
 
-# Setup session keep-alive
-cat > "$HOME/.local/bin/session-keep-alive" << 'EOF_KEEPALIVE'
+# Set up colorful prompt with status indicator
+PS1='\[\033[01;32m\]\u@terminal\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]$([ $? -eq 0 ] && echo -e "\[\033[01;32m\] ✓" || echo -e "\[\033[01;31m\] ✗ $?")\[\033[00m\]\$ '
+
+# Enable color support for common commands
+alias ls='ls --color=auto'
+alias grep='grep --color=auto'
+alias fgrep='fgrep --color=auto'
+alias egrep='egrep --color=auto'
+alias diff='diff --color=auto'
+
+# Useful aliases
+alias ll='ls -la'
+alias la='ls -A'
+alias l='ls -CF'
+alias cls='clear'
+alias h='history'
+alias ..='cd ..'
+alias ...='cd ../..'
+alias mkdir='mkdir -p'
+alias df='df -h'
+alias du='du -h'
+alias free='free -h'
+
+# Enhanced history configuration
+HISTSIZE=10000
+HISTFILESIZE=20000
+HISTCONTROL=ignoreboth:erasedups
+HISTTIMEFORMAT="%F %T "
+shopt -s histappend
+
+# Better directory navigation
+shopt -s autocd
+shopt -s dirspell
+shopt -s cdspell
+
+# Check terminal size after each command
+shopt -s checkwinsize
+
+# Make less more friendly for non-text input files
+[ -x /usr/bin/lesspipe ] && eval "$(SHELL=/bin/sh lesspipe)"
+
+# Enable programmable completion
+if ! shopt -oq posix; then
+  if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+  elif [ -f /etc/bash_completion ]; then
+    . /etc/bash_completion
+  fi
+fi
+
+# Set default editor
+if command -v vim > /dev/null 2>&1; then
+    export EDITOR='vim'
+    export VISUAL='vim'
+elif command -v nano > /dev/null 2>&1; then
+    export EDITOR='nano'
+    export VISUAL='nano'
+fi
+
+# Useful functions
+mkcd() {
+    mkdir -p "$1" && cd "$1"
+}
+
+extract() {
+    if [ -f "$1" ]; then
+        case "$1" in
+            *.tar.bz2)   tar xjf "$1"     ;;
+            *.tar.gz)    tar xzf "$1"     ;;
+            *.bz2)       bunzip2 "$1"     ;;
+            *.rar)       unrar e "$1"     ;;
+            *.gz)        gunzip "$1"      ;;
+            *.tar)       tar xf "$1"      ;;
+            *.tbz2)      tar xjf "$1"     ;;
+            *.tgz)       tar xzf "$1"     ;;
+            *.zip)       unzip "$1"       ;;
+            *.Z)         uncompress "$1"  ;;
+            *.7z)        7z x "$1"        ;;
+            *)           echo "'$1' cannot be extracted via extract" ;;
+        esac
+    else
+        echo "'$1' is not a valid file"
+    fi
+}
+
+# OpenSSL wrapper for better password handling
+if [ -f "$HOME/.local/bin/openssl-wrapper" ]; then
+    alias openssl="$HOME/.local/bin/openssl-wrapper"
+fi
+
+# Add path for local binaries
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+
+# Set locale
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+BASHRC
+
+# Set up profile
+cat > "$HOME/.profile" << 'PROFILE'
+# ~/.profile: executed by login shells
+
+# Include .bashrc if it exists
+if [ -n "$BASH_VERSION" ]; then
+    if [ -f "$HOME/.bashrc" ]; then
+        . "$HOME/.bashrc"
+    fi
+fi
+
+# Set PATH so it includes user's private bin if it exists
+if [ -d "$HOME/.local/bin" ] ; then
+    PATH="$HOME/.local/bin:$PATH"
+fi
+if [ -d "$HOME/bin" ] ; then
+    PATH="$HOME/bin:$PATH"
+fi
+
+# Set environment variables
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+PROFILE
+
+# Setup OpenSSL wrapper (keep compatibility with existing code)
+if [ -f "/app/user_scripts/openssl-wrapper" ]; then
+    cp -f "/app/user_scripts/openssl-wrapper" "$HOME/.local/bin/"
+    chmod +x "$HOME/.local/bin/openssl-wrapper"
+fi
+
+# Setup vim configuration if available
+if command -v vim > /dev/null 2>&1; then
+    echo -e "${YELLOW}Setting up vim configuration...${NC}"
+    cat > "$HOME/.vimrc" << 'VIMRC'
+" Basic Vim Configuration
+syntax on                 " Enable syntax highlighting
+set number                " Show line numbers
+set tabstop=4             " Tab width is 4 spaces
+set softtabstop=4         " Tab width while editing
+set shiftwidth=4          " Indentation width
+set expandtab             " Use spaces instead of tabs
+set autoindent            " Auto indent
+set smartindent           " Smart indent
+set wrap                  " Wrap lines
+set showmatch             " Show matching brackets
+set hlsearch              " Highlight search results
+set incsearch             " Incremental search
+set ignorecase            " Ignore case when searching
+set smartcase             " Override ignorecase when uppercase is used
+set laststatus=2          " Always show status line
+set ruler                 " Show cursor position
+set wildmenu              " Visual autocomplete for command menu
+set mouse=a               " Enable mouse usage
+set background=dark       " Dark background
+
+" Key mappings
+let mapleader = ","       " Leader key
+nnoremap <leader>w :w<CR>  " Quick save
+nnoremap <leader>q :q<CR>  " Quick quit
+VIMRC
+fi
+
+# Setup nano configuration if available
+if command -v nano > /dev/null 2>&1; then
+    echo -e "${YELLOW}Setting up nano configuration...${NC}"
+    cat > "$HOME/.nanorc" << 'NANORC'
+# Basic Nano Configuration
+set tabsize 4
+set tabstospaces
+set autoindent
+set linenumbers
+set mouse
+set smooth
+set boldtext
+set softwrap
+NANORC
+
+    # Create directory for nano backups
+    mkdir -p "$HOME/.nano/backups"
+fi
+
+# Create session keepalive utility
+cat > "$HOME/.local/bin/session-keepalive" << 'KEEPALIVE'
 #!/bin/bash
-# Keep session alive by sending a command periodically
-echo "Starting session keep-alive. Press Ctrl+C to stop."
+# Keep terminal session alive by sending activity periodically
+
+# Default interval in seconds
+interval=60
+
+# Check for specified interval
+if [ $# -eq 1 ]; then
+    if [[ "$1" =~ 
+^
+[0-9]+$ ]]; then
+        interval=$1
+    else
+        echo "Error: Interval must be a positive number"
+        echo "Usage: session-keepalive [seconds]"
+        exit 1
+    fi
+fi
+
+echo "Starting session keepalive (sending activity every $interval seconds)"
+echo "Press Ctrl+C to stop"
+
+count=0
 while true; do
-  echo -n "." > /dev/null
-  sleep 60
+    sleep $interval
+    
+    # Print a dot to show activity
+    echo -n "."
+    
+    # Add a newline every 60 dots for readability
+    count=$((count + 1))
+    if [ $count -eq 60 ]; then
+        echo
+        count=0
+    fi
 done
-EOF_KEEPALIVE
-chmod +x "$HOME/.local/bin/session-keep-alive"
+KEEPALIVE
 
-# Setup help command
-cat > "$HOME/.local/bin/help" << 'EOF_HELP'
+chmod +x "$HOME/.local/bin/session-keepalive"
+
+# Create comprehensive system information tool
+cat > "$HOME/.local/bin/sysinfo" << 'SYSINFO'
 #!/bin/bash
-# Enhanced help system
+# System Information Tool
 
+# Define colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-if [ "$#" -eq 0 ]; then
-  # Display general help
-  echo -e "${BLUE}Enhanced Terminal Environment - Help${NC}"
-  echo
-  echo -e "${YELLOW}File Operations:${NC}"
-  echo "  ls, ll          - List files (with color)"
-  echo "  cd              - Change directory"
-  echo "  mkdir           - Create directory"
-  echo "  touch           - Create empty file"
-  echo
-  echo -e "${YELLOW}Text Editors:${NC}"
-  echo "  nano            - Simple text editor"
-  echo "  cat, less       - View file contents"
-  echo
-  echo -e "${YELLOW}Package Management:${NC}"
-  echo "  pkg install     - Install packages"
-  echo "  pkg remove      - Remove packages"
-  echo "  pkg list-installed - List installed packages"
-  echo
-  echo -e "${YELLOW}Cryptography:${NC}"
-  echo "  openssl         - OpenSSL with password handling"
-  echo
-  echo -e "${YELLOW}Utilities:${NC}"
-  echo "  session-keep-alive - Prevent session timeouts"
-  echo
-  echo -e "For more details, use ${GREEN}help COMMAND${NC}"
+echo -e "${BLUE}${BOLD}System Information${NC}"
+echo -e "${YELLOW}====================${NC}"
+
+# System info
+echo -e "${BOLD}System:${NC}"
+echo -n "  Hostname: "
+hostname
+echo -n "  Kernel: "
+uname -r
+echo -n "  OS: "
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    echo "$PRETTY_NAME"
 else
-  # Display help for specific command
-  case "$1" in
-    ls)
-      echo -e "${BLUE}ls - List directory contents${NC}"
-      echo
-      echo "Usage: ls [OPTIONS] [FILE]..."
-      echo
-      echo "Options:"
-      echo "  -l    Use a long listing format"
-      echo "  -a    Do not ignore entries starting with ."
-      echo "  -h    Human-readable sizes"
-      ;;
-    pkg)
-      echo -e "${BLUE}pkg - Package management${NC}"
-      echo
-      echo "Usage: pkg COMMAND [arguments]"
-      echo
-      echo "Commands:"
-      echo "  install PKG      Install package"
-      echo "  remove PKG       Remove package"
-      echo "  list-installed   List installed packages"
-      echo "  update           Update package database"
-      echo "  search TERM      Search for packages"
-      ;;
-    *)
-      echo -e "${BLUE}Help for: $1${NC}"
-      echo
-      if command -v "$1" &>/dev/null; then
-        echo "This is an available command. Try running with --help:"
-        echo "  $1 --help"
-      else
-        echo "Command not found. Use 'help' for a list of available commands."
-      fi
-      ;;
-  esac
+    echo "$(uname -s) $(uname -r)"
 fi
-EOF_HELP
+echo -n "  Uptime: "
+uptime -p 2>/dev/null || uptime
+
+# CPU info
+echo -e "\n${BOLD}CPU:${NC}"
+if [ -f /proc/cpuinfo ]; then
+    echo -n "  Model: "
+    grep "model name" /proc/cpuinfo | head -1 | cut -d ':' -f 2 | sed 's/
+^
+[ \t]*//'
+    echo -n "  Cores: "
+    grep -c "processor" /proc/cpuinfo
+else
+    echo "  CPU information not available"
+fi
+
+# Memory info
+echo -e "\n${BOLD}Memory:${NC}"
+if command -v free >/dev/null 2>&1; then
+    free -h | grep -v "Swap"
+else
+    echo "  Memory information not available"
+fi
+
+# Disk info
+echo -e "\n${BOLD}Disk:${NC}"
+if command -v df >/dev/null 2>&1; then
+    df -h | grep -v "tmpfs" | grep -v "udev"
+else
+    echo "  Disk information not available"
+fi
+
+# Network info
+echo -e "\n${BOLD}Network:${NC}"
+if command -v ip >/dev/null 2>&1; then
+    ip -4 addr show | grep -v "valid_lft" | grep -E "inet |
+^
+[0-9]+"
+elif command -v ifconfig >/dev/null 2>&1; then
+    ifconfig | grep -E "inet|
+^
+[a-z]" | grep -v "127.0.0.1"
+else
+    echo "  Network information not available"
+fi
+
+# Process info
+echo -e "\n${BOLD}Top Processes:${NC}"
+if command -v ps >/dev/null 2>&1; then
+    echo "  Top 5 CPU consuming processes:"
+    ps aux --sort=-%cpu | head -6
+else
+    echo "  Process information not available"
+fi
+SYSINFO
+
+chmod +x "$HOME/.local/bin/sysinfo"
+
+# Create enhanced help system
+cat > "$HOME/.local/bin/help" << 'HELP'
+#!/bin/bash
+# Comprehensive Real Linux Terminal Help System
+
+# Define colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Main help function - no arguments
+show_main_help() {
+    echo -e "${BLUE}Real Linux Terminal - Help System${NC}"
+    echo -e "${YELLOW}====================================${NC}"
+    echo
+    echo -e "Available commands and topics:"
+    echo
+    echo -e "${GREEN}File Operations:${NC}"
+    echo "  ls, ll        - List directory contents"
+    echo "  cd            - Change directory"
+    echo "  mkdir         - Create directories"
+    echo "  rm            - Remove files or directories"
+    echo "  cp            - Copy files or directories"
+    echo "  mv            - Move/rename files or directories"
+    echo "  find          - Search for files"
+    echo "  grep          - Search for patterns in files"
+    echo
+    echo -e "${GREEN}System Information:${NC}"
+    echo "  top           - Display system processes"
+    echo "  free          - Display memory usage"
+    echo "  df            - Display disk space usage"
+    echo "  ps            - Display process status"
+    echo "  sysinfo       - Display comprehensive system information"
+    echo
+    echo -e "${GREEN}Text Editing:${NC}"
+    echo "  nano          - Simple text editor"
+    echo "  vim           - Advanced text editor"
+    echo "  cat           - Display file content"
+    echo "  less          - View file with pagination"
+    echo "  head/tail     - View beginning/end of files"
+    echo
+    echo -e "${GREEN}Network Utilities:${NC}"
+    echo "  ping          - Test network connectivity"
+    echo "  curl          - Transfer data from/to servers"
+    echo "  wget          - Download files"
+    echo "  ssh           - Secure shell client"
+    echo "  ifconfig/ip   - Network interface information"
+    echo
+    echo -e "${GREEN}Development Tools:${NC}"
+    echo "  git           - Version control system"
+    echo "  python/python3 - Python interpreter"
+    echo "  gcc/g++       - C/C++ compiler"
+    echo "  make          - Build automation tool"
+    echo
+    echo -e "${GREEN}Helpful Utilities:${NC}"
+    echo "  extract       - Extract compressed files (function)"
+    echo "  mkcd          - Create directory and cd into it (function)"
+    echo "  session-keepalive - Keep terminal session alive"
+    echo
+    echo -e "For detailed help on a command, use: ${YELLOW}help COMMAND${NC}"
+    echo -e "For man pages (if available): ${YELLOW}man COMMAND${NC}"
+}
+
+# Main logic
+if [ $# -eq 0 ]; then
+    show_main_help
+    exit 0
+fi
+
+command="$1"
+
+# Check if man is available and if the command has a man page
+if command -v man >/dev/null 2>&1 && man -w "$command" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Showing man page for '$command':${NC}"
+    echo
+    man "$command"
+    exit 0
+fi
+
+# If no man page, try --help
+if command -v "$command" >/dev/null 2>&1; then
+    if "$command" --help >/dev/null 2>&1; then
+        echo -e "${YELLOW}Help for '$command':${NC}"
+        echo
+        "$command" --help | less
+        exit 0
+    elif "$command" -h >/dev/null 2>&1; then
+        echo -e "${YELLOW}Help for '$command':${NC}"
+        echo
+        "$command" -h | less
+        exit 0
+    fi
+fi
+
+# Fallback to custom help for common commands
+echo -e "${YELLOW}Help for '$command':${NC}"
+echo
+
+case "$command" in
+    ls)
+        echo "ls - list directory contents"
+        echo
+        echo "Usage: ls [OPTION]... [FILE]..."
+        echo
+        echo "Common options:"
+        echo "  -l        Use a long listing format"
+        echo "  -a        Do not ignore entries starting with ."
+        echo "  -h        With -l, print sizes in human readable format"
+        echo "  --color   Colorize the output"
+        echo
+        echo "Examples:"
+        echo "  ls        List files in the current directory"
+        echo "  ls -la    List all files in long format"
+        echo "  ls -lh    List files with human-readable sizes"
+        echo "  ls /path  List files in the specified directory"
+        ;;
+    cd)
+        echo "cd - change directory"
+        echo
+        echo "Usage: cd [DIRECTORY]"
+        echo
+        echo "Examples:"
+        echo "  cd        Change to home directory"
+        echo "  cd /usr   Change to /usr directory"
+        echo "  cd ..     Move up one directory"
+        echo "  cd -      Go back to previous directory"
+        ;;
+    *)
+        echo "No specific help available for '$command'."
+        echo
+        echo "Try one of the following:"
+        echo "  - If it's a real command: $command --help"
+        echo "  - Type 'help' for a list of common commands"
+        echo "  - If available: man $command"
+        ;;
+esac
+HELP
+
 chmod +x "$HOME/.local/bin/help"
 
-# Display setup completion message
-cat << 'EOF_MESSAGE'
------------------------------------------------------------
- Enhanced Terminal Environment - Setup Complete
------------------------------------------------------------
-
- The following features are now available:
-
- - Color-enabled commands (ls, grep)
- - Package management with pkg
- - Enhanced help system (type 'help')
- - OpenSSL wrapper with better password handling
- - Session keep-alive to prevent timeouts
-
- To get started, try:
-   help                  - Show available commands
-   pkg list-installed    - Show installed packages
-   session-keep-alive &  - Keep your session active
-
------------------------------------------------------------
-EOF_MESSAGE
-
-echo -e "${GREEN}Enhanced environment setup complete!${NC}"
+# Display completion message with the real Linux tools now available
+echo -e "${GREEN}Real Linux Terminal Environment setup complete!${NC}"
+echo -e "${YELLOW}You now have access to real Linux commands and tools:${NC}"
+echo "  - Full system utilities (ps, top, free, df, etc.)"
+echo "  - Network tools (ping, traceroute, curl, wget, ssh, etc.)"
+echo "  - Text editors (vim, nano) with configuration"
+echo "  - Development tools (gcc, make, git, etc.)"
+echo "  - Man pages and command documentation"
+echo
+echo -e "${BLUE}Type 'help' to see available commands, or 'sysinfo' for system information.${NC}"
+echo -e "Use 'session-keepalive' to prevent the terminal session from timing out."
+echo
+echo -e "${GREEN}Enjoy your real Linux terminal experience!${NC}"
