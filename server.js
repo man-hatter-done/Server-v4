@@ -68,12 +68,15 @@ const limiter = rateLimit({
 app.use(limiter);
 app.use(express.json());
 
-// Authentication middleware
+// Authentication middleware with enhanced error handling
 const authenticate = (req, res, next) => {
   const providedApiKey = req.headers['x-api-key'];
   
   if (!providedApiKey) {
-    return res.status(401).json({ error: 'API key is required' });
+    return res.status(401).json({ 
+      error: 'API key is required',
+      retryable: false
+    });
   }
   
   // Constant-time comparison to prevent timing attacks
@@ -82,21 +85,37 @@ const authenticate = (req, res, next) => {
       Buffer.from(providedApiKey, 'utf8'), 
       Buffer.from(API_KEY, 'utf8')
     )) {
-      return res.status(401).json({ error: 'Invalid API key' });
+      return res.status(401).json({ 
+        error: 'Invalid API key',
+        retryable: false
+      });
     }
   } catch (error) {
-    return res.status(401).json({ error: 'Invalid API key format' });
+    return res.status(401).json({ 
+      error: 'Invalid API key format',
+      retryable: false
+    });
   }
   
   next();
 };
 
-// Session validation middleware
+// Session validation middleware with more informative error messages
 const validateSession = (req, res, next) => {
   const sessionId = req.headers['x-session-id'];
   
-  if (!sessionId || !sessions[sessionId]) {
-    return res.status(401).json({ error: 'Invalid or expired session' });
+  if (!sessionId) {
+    return res.status(401).json({ 
+      error: 'Session ID is required',
+      retryable: false
+    });
+  }
+  
+  if (!sessions[sessionId]) {
+    return res.status(401).json({ 
+      error: 'Invalid or expired session. Please create a new session.',
+      retryable: true
+    });
   }
   
   const session = sessions[sessionId];
@@ -105,7 +124,28 @@ const validateSession = (req, res, next) => {
   if (Date.now() - session.lastAccessed > SESSION_TIMEOUT) {
     // Cleanup container
     cleanupSession(sessionId);
-    return res.status(401).json({ error: 'Session expired' });
+    return res.status(401).json({ 
+      error: 'Session expired due to inactivity. Please create a new session.',
+      retryable: true
+    });
+  }
+  
+  // Check if container exists and is running
+  try {
+    const container = docker.getContainer(session.containerId);
+    container.inspect()
+      .then((info) => {
+        if (!info.State.Running) {
+          console.warn(`Container for session ${sessionId} exists but is not running. Will attempt restart.`);
+          // We'll let the command handler deal with restarting rather than doing it here
+        }
+      })
+      .catch(err => {
+        console.error(`Container validation failed for session ${sessionId}:`, err.message);
+        // We'll continue anyway and let the command handler deal with missing containers
+      });
+  } catch (err) {
+    console.error(`Container check failed for session ${sessionId}:`, err.message);
   }
   
   // Update last accessed time
@@ -218,7 +258,7 @@ app.post('/create-session', authenticate, async (req, res) => {
   }
 });
 
-// Execute command in user's container
+// Execute command in user's container with enhanced error handling and retry support
 app.post('/execute-command', authenticate, validateSession, async (req, res) => {
   const { command } = req.body;
   const session = req.session;
@@ -227,9 +267,32 @@ app.post('/execute-command', authenticate, validateSession, async (req, res) => 
     return res.status(400).json({ error: 'Command is required' });
   }
   
+  // Get unique execution ID for logging
+  const executionId = crypto.randomBytes(4).toString('hex');
+  
   try {
+    console.log(`[${executionId}] Executing command for user ${session.userId}`);
+    
     // Get container
     const container = docker.getContainer(session.containerId);
+    
+    // Check if container is running before executing
+    const containerInfo = await container.inspect();
+    if (!containerInfo.State.Running) {
+      console.error(`[${executionId}] Container not running. Attempting to restart.`);
+      
+      try {
+        await container.start();
+        // Wait a moment for container to initialize
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (startError) {
+        console.error(`[${executionId}] Failed to restart container: ${startError.message}`);
+        return res.status(500).json({ 
+          error: 'Container is not running and could not be restarted. Please create a new session.',
+          retryable: true
+        });
+      }
+    }
     
     // Log command for audit
     const logEntry = {
@@ -237,13 +300,19 @@ app.post('/execute-command', authenticate, validateSession, async (req, res) => 
       userId: session.userId,
       sessionId: req.headers['x-session-id'],
       clientIp: session.clientIp,
-      command: command
+      command: command,
+      executionId: executionId
     };
     
     fs.appendFileSync(
       path.join(__dirname, 'logs', 'commands.log'), 
       JSON.stringify(logEntry) + '\n'
     );
+    
+    // Set timeout for command execution (prevent hanging commands)
+    const commandTimeout = setTimeout(() => {
+      console.warn(`[${executionId}] Command execution taking longer than expected`);
+    }, 10000); // 10 seconds warning
     
     // Execute command in container
     const exec = await container.exec({
@@ -264,32 +333,59 @@ app.post('/execute-command', authenticate, validateSession, async (req, res) => 
     
     // Handle stream errors
     stream.on('error', (err) => {
-      res.status(500).json({ error: err.message });
+      clearTimeout(commandTimeout);
+      console.error(`[${executionId}] Stream error: ${err.message}`);
+      res.status(500).json({ 
+        error: err.message,
+        retryable: true
+      });
     });
     
     // Wait for command to complete
     stream.on('end', async () => {
+      clearTimeout(commandTimeout);
       try {
         // Get exit code
         const inspect = await exec.inspect();
         const exitCode = inspect.ExitCode;
         
+        // Update session last accessed time
+        session.lastAccessed = Date.now();
+        
+        // Log command completion
+        console.log(`[${executionId}] Command completed with exit code ${exitCode}`);
+        
         if (exitCode !== 0) {
           return res.status(400).json({ 
-            error: output || 'Command failed', 
-            exitCode 
+            error: output || `Command failed with exit code ${exitCode}`, 
+            exitCode,
+            retryable: false // Most command failures shouldn't be auto-retried
           });
         }
         
         res.json({ output });
       } catch (inspectError) {
-        res.status(500).json({ error: 'Failed to get command status' });
+        console.error(`[${executionId}] Failed to get command status: ${inspectError.message}`);
+        res.status(500).json({ 
+          error: 'Failed to get command status. Please try again.',
+          retryable: true
+        });
       }
     });
     
   } catch (error) {
-    console.error('Error executing command:', error);
-    res.status(500).json({ error: 'Failed to execute command: ' + error.message });
+    console.error(`[${executionId}] Error executing command:`, error);
+    
+    // Determine if the error is related to the session/container and should be retried
+    const isRetryable = error.message.includes('not found') || 
+                       error.message.includes('no such container') ||
+                       error.message.includes('connection') ||
+                       error.message.includes('network');
+                       
+    res.status(500).json({ 
+      error: 'Failed to execute command: ' + error.message,
+      retryable: isRetryable
+    });
   }
 });
 

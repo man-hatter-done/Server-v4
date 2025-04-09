@@ -316,12 +316,12 @@ function showHelpMessage() {
     addTerminalText('', 'spacer');
 }
 
-// Execute command in the terminal session
-async function executeCommand(command) {
+// Execute command in the terminal session with retry capability
+async function executeCommand(command, retryCount = 0, isRetry = false) {
     if (!command.trim()) return;
     
-    // Add to command history
-    if (commandHistory.length === 0 || commandHistory[commandHistory.length - 1] !== command) {
+    // Add to command history (only if not a retry)
+    if (!isRetry && (commandHistory.length === 0 || commandHistory[commandHistory.length - 1] !== command)) {
         commandHistory.push(command);
         saveCommandHistory();
     }
@@ -332,9 +332,14 @@ async function executeCommand(command) {
         return;
     }
     
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 1000; // 1 second delay between retries
+    
     try {
-        // Display the command in the terminal
-        addTerminalText(command, 'command');
+        // Only display the command if this is not a retry attempt
+        if (!isRetry) {
+            addTerminalText(command, 'command');
+        }
         
         // Set executing state
         isExecuting = true;
@@ -351,6 +356,14 @@ async function executeCommand(command) {
             }
         }
         
+        // Add a timeout to detect hanging commands
+        const timeout = setTimeout(() => {
+            // Not aborting the fetch, but providing visual feedback
+            if (isExecuting) {
+                addTerminalText('Command is taking longer than expected...', 'warning');
+            }
+        }, 10000); // 10 seconds timeout
+        
         // Execute the command via API
         const response = await fetch(`${API_BASE_URL}/execute-command`, {
             method: 'POST',
@@ -361,7 +374,37 @@ async function executeCommand(command) {
             body: JSON.stringify({ command })
         });
         
+        // Clear the timeout since we got a response
+        clearTimeout(timeout);
+        
         if (!response.ok) {
+            // Handle specific error cases
+            if (response.status === 401) {
+                // Session expired - create new session and retry
+                addTerminalText('Session expired. Creating new session and retrying...', 'system');
+                await createNewSession();
+                
+                if (retryCount < MAX_RETRIES) {
+                    setTimeout(() => {
+                        executeCommand(command, retryCount + 1, true);
+                    }, RETRY_DELAY);
+                    return;
+                } else {
+                    throw new Error('Session expired and max retries reached');
+                }
+            } else if (response.status === 500 || response.status === 502 || response.status === 503 || response.status === 504) {
+                // Server errors - retry
+                if (retryCount < MAX_RETRIES) {
+                    addTerminalText(`Server error (${response.status}). Retrying command in ${RETRY_DELAY/1000} second${RETRY_DELAY/1000 !== 1 ? 's' : ''}...`, 'system');
+                    setTimeout(() => {
+                        executeCommand(command, retryCount + 1, true);
+                    }, RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+                    return;
+                } else {
+                    throw new Error(`Server error ${response.status} after ${MAX_RETRIES} retries`);
+                }
+            }
+            
             throw new Error(`HTTP error ${response.status}`);
         }
         
@@ -374,7 +417,22 @@ async function executeCommand(command) {
         
         // Display the result
         if (data.error) {
-            addTerminalText(data.error, 'error');
+            // Check if this is a recoverable error
+            if (data.error.includes('invalid') || data.error.includes('expired') || data.error.includes('failed')) {
+                if (retryCount < MAX_RETRIES) {
+                    addTerminalText(`Command error: ${data.error}. Retrying...`, 'warning');
+                    setTimeout(() => {
+                        executeCommand(command, retryCount + 1, true);
+                    }, RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+                    return;
+                } else {
+                    addTerminalText(`Command failed after ${MAX_RETRIES} attempts: ${data.error}`, 'error');
+                    addTerminalText('Try executing the command again manually', 'system');
+                }
+            } else {
+                // Normal command error (not a system error)
+                addTerminalText(data.error, 'error');
+            }
         } else {
             // Check if we need to update our working directory after a pwd command
             if (command.trim() === 'pwd') {
@@ -397,6 +455,24 @@ async function executeCommand(command) {
         setStatus('connected');
     } catch (error) {
         setStatus('error');
+        
+        // Check if we should retry
+        if (retryCount < MAX_RETRIES && 
+            (error.message.includes('HTTP error') || 
+             error.message.includes('network') || 
+             error.message.includes('timeout'))) {
+            
+            addTerminalText(`Error: ${error.message}. Retrying (${retryCount + 1}/${MAX_RETRIES})...`, 'warning');
+            console.error(`Command execution error (retry ${retryCount + 1}):`, error);
+            
+            // Wait before retrying with exponential backoff
+            setTimeout(() => {
+                executeCommand(command, retryCount + 1, true);
+            }, RETRY_DELAY * Math.pow(2, retryCount));
+            return;
+        }
+        
+        // Max retries reached or non-retryable error
         addTerminalText(`Error executing command: ${error.message}`, 'error');
         console.error('Command execution error:', error);
         
@@ -406,8 +482,11 @@ async function executeCommand(command) {
             createNewSession();
         }
     } finally {
-        isExecuting = false;
-        showProgress(false);
+        // Only set as not executing if we're not retrying
+        if (!isRetry || retryCount >= MAX_RETRIES) {
+            isExecuting = false;
+            showProgress(false);
+        }
     }
 }
 

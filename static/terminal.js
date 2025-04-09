@@ -80,13 +80,20 @@ async function createNewSession() {
     }
 }
 
-// Execute command in the terminal session
-async function executeCommand(command) {
+// Execute command in the terminal session with retry capability
+async function executeCommand(command, retryCount = 0, isRetry = false) {
     if (!command.trim()) return;
     
+    // Define constants for retries
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 1000; // 1 second
+    
     try {
-        // Display the command in the terminal
-        addTerminalText(command, 'command');
+        // Only show the command if this is not a retry
+        if (!isRetry) {
+            // Display the command in the terminal
+            addTerminalText(command, 'command');
+        }
         
         // Check if we have a valid session
         if (!currentSession.id) {
@@ -98,6 +105,12 @@ async function executeCommand(command) {
             }
         }
         
+        // Add a timeout to detect hanging commands
+        const timeout = setTimeout(() => {
+            // Provide visual feedback for long-running commands
+            addTerminalText('Command is taking longer than expected...', 'system');
+        }, 10000); // 10 seconds timeout
+        
         // Execute the command via API
         const response = await fetch(`${API_BASE_URL}/execute-command`, {
             method: 'POST',
@@ -108,6 +121,38 @@ async function executeCommand(command) {
             body: JSON.stringify({ command })
         });
         
+        // Clear the timeout
+        clearTimeout(timeout);
+        
+        // Check for non-OK response
+        if (!response.ok) {
+            // Handle session expiration
+            if (response.status === 401) {
+                addTerminalText('Session expired. Creating new session and retrying...', 'system');
+                await createNewSession();
+                
+                if (retryCount < MAX_RETRIES) {
+                    setTimeout(() => {
+                        executeCommand(command, retryCount + 1, true);
+                    }, RETRY_DELAY);
+                    return;
+                } else {
+                    throw new Error('Session expired and max retries reached');
+                }
+            } else if (response.status >= 500) {
+                // Server errors - retry with backoff
+                if (retryCount < MAX_RETRIES) {
+                    addTerminalText(`Server error (${response.status}). Retrying command...`, 'system');
+                    setTimeout(() => {
+                        executeCommand(command, retryCount + 1, true);
+                    }, RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+                    return;
+                }
+            }
+            
+            throw new Error(`HTTP error ${response.status}`);
+        }
+        
         const data = await response.json();
         
         // Update session last activity
@@ -116,14 +161,44 @@ async function executeCommand(command) {
         
         // Display the result
         if (data.error) {
-            addTerminalText(data.error, 'error');
+            // Check if this is a system error that we should retry
+            if ((data.error.includes('invalid') || data.error.includes('expired') || 
+                 data.error.includes('failed')) && retryCount < MAX_RETRIES) {
+                addTerminalText(`Command error: ${data.error}. Retrying...`, 'system');
+                setTimeout(() => {
+                    executeCommand(command, retryCount + 1, true);
+                }, RETRY_DELAY * (retryCount + 1));
+                return;
+            } else {
+                addTerminalText(data.error, 'error');
+            }
         } else {
             // Show the output with proper formatting
             addTerminalText(data.output || '(Command executed with no output)', 'output');
         }
     } catch (error) {
-        addTerminalText(`Error executing command: ${error.message}`, 'error');
-        console.error('Command execution error:', error);
+        // Check if we should retry based on error type
+        if (retryCount < MAX_RETRIES && 
+            (error.message.includes('network') || 
+             error.message.includes('timeout') || 
+             error.message.includes('HTTP error'))) {
+            
+            addTerminalText(`Error: ${error.message}. Retrying (${retryCount + 1}/${MAX_RETRIES})...`, 'system');
+            
+            // Wait before retrying with exponential backoff
+            setTimeout(() => {
+                executeCommand(command, retryCount + 1, true);
+            }, RETRY_DELAY * Math.pow(2, retryCount));
+        } else {
+            // Max retries reached or non-retryable error
+            addTerminalText(`Error executing command: ${error.message}`, 'error');
+            console.error('Command execution error:', error);
+            
+            // For session errors, try to create a new session
+            if (error.message.includes('401') || error.message.includes('session')) {
+                addTerminalText('Session may have expired. Try creating a new session.', 'system');
+            }
+        }
     }
 }
 
