@@ -29,14 +29,16 @@ def run_server():
     print(f"Debug mode: {debug}")
     print(f"WebSocket mode: {socketio.async_mode}")
     
-    # Start the socketio server
+    # Start the socketio server with allow_unsafe_werkzeug=True for production
+    # This ensures that the server starts even in production environments
     socketio.run(
         app,
         host="0.0.0.0",
         port=port,
         debug=debug,
         use_reloader=debug,
-        log_output=True
+        log_output=True,
+        allow_unsafe_werkzeug=True  # Allow running in production
     )
 
 if __name__ == "__main__":

@@ -86,6 +86,6 @@ EXPOSE 3000
 COPY run.py .
 RUN chmod +x run.py
 
-# Start using gunicorn with eventlet for WebSocket support
-# Modified to support Socket.IO using eventlet worker class
-CMD ["gunicorn", "--bind", "0.0.0.0:3000", "--worker-class", "eventlet", "--workers", "4", "--threads", "1", "--worker-connections", "1000", "--timeout", "120", "--keep-alive", "5", "--max-requests", "500", "--max-requests-jitter", "100", "--graceful-timeout", "30", "--log-level", "info", "--worker-tmp-dir", "/dev/shm", "--capture-output", "--enable-stdio-inheritance", "--error-logfile", "logs/gunicorn-error.log", "--access-logfile", "logs/gunicorn-access.log", "--logger-class", "gunicorn.glogging.Logger", "flask_server:app"]
+# Start using the Python script directly for proper WebSocket initialization
+# This bypasses gunicorn to ensure correct Socket.IO initialization
+CMD ["python", "run.py"]
