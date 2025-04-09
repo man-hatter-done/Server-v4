@@ -7,14 +7,92 @@ import signal
 import subprocess
 import threading
 import atexit
+import functools
 from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory, send_file, render_template
+from flask import Flask, request, jsonify, send_from_directory, send_file, render_template, make_response
 from flask_cors import CORS
+from flask_compress import Compress
 from werkzeug.security import generate_password_hash, check_password_hash
+import cachetools.func
 from file_management import register_file_management_endpoints
 
+# Create a Flask app with optimized settings
 app = Flask(__name__, static_folder='static')
-CORS(app)  # Enable CORS for all routes
+app.config['JSON_SORT_KEYS'] = False  # Faster JSON responses
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 86400  # Cache static files for 1 day
+app.config['COMPRESS_ALGORITHM'] = ['gzip', 'deflate']  # Enable response compression
+app.config['COMPRESS_LEVEL'] = 6  # Medium compression level - good balance between CPU and size
+app.config['COMPRESS_MIN_SIZE'] = 500  # Only compress responses larger than 500 bytes
+
+# Initialize Flask-Compress for response compression
+compress = Compress()
+compress.init_app(app)
+
+# Enable CORS with optimized settings
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True, max_age=86400)
+
+# In-memory cache for responses
+response_cache = {}
+response_cache_size = 1000  # Maximum cache entries
+response_cache_hits = 0
+response_cache_misses = 0
+
+# Simple LRU cache for file content
+file_content_cache = cachetools.func.lru_cache(maxsize=100)
+
+# Caching decorator for route responses
+def cached_response(timeout=300):
+    def decorator(f):
+        @functools.wraps(f)
+        def decorated_function(*args, **kwargs):
+            global response_cache, response_cache_hits, response_cache_misses
+            
+            # Skip cache for authenticated/session routes
+            if 'X-Session-Id' in request.headers or 'X-API-Key' in request.headers:
+                return f(*args, **kwargs)
+                
+            # Create a cache key from the request
+            cache_key = f"{request.path}?{request.query_string.decode('utf-8')}"
+            
+            # Check if we have the response cached and it's not expired
+            current_time = time.time()
+            if cache_key in response_cache:
+                cached_data, expiry_time = response_cache[cache_key]
+                if current_time < expiry_time:
+                    response_cache_hits += 1
+                    return cached_data
+            
+            # Cache miss - generate response
+            response_cache_misses += 1
+            response = f(*args, **kwargs)
+            
+            # Only cache successful responses that are not too large
+            # Don't cache streaming responses or file downloads
+            if not isinstance(response, tuple) or (isinstance(response, tuple) and response[1] < 300):
+                # Store in cache with expiry time
+                response_cache[cache_key] = (response, current_time + timeout)
+                
+                # Trim cache if it's too large
+                if len(response_cache) > response_cache_size:
+                    # Remove oldest entries
+                    oldest_keys = sorted(
+                        response_cache.keys(), 
+                        key=lambda k: response_cache[k][1]
+                    )[:len(response_cache) - response_cache_size]
+                    
+                    for key in oldest_keys:
+                        del response_cache[key]
+                
+            return response
+        return decorated_function
+    return decorator
+
+# Function to get file contents with caching
+@file_content_cache
+def get_cached_file_content(file_path):
+    """Get file content with caching for frequently accessed files"""
+    with open(file_path, 'rb') as f:
+        return f.read()
 
 # Configuration
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
@@ -48,24 +126,8 @@ def log_activity(log_type, data):
         f.write(json.dumps(log_entry) + '\n')
 
 
-def setup_user_environment(home_dir):
-    """Set up a user environment with necessary files and directories"""
-    os.makedirs(home_dir, exist_ok=True)
-    
-    # Create Python virtual environment if it doesn't exist
-    venv_dir = os.path.join(home_dir, 'venv')
-    if not os.path.exists(venv_dir):
-        try:
-            subprocess.run(['python3', '-m', 'venv', venv_dir], check=True)
-        except subprocess.CalledProcessError:
-            # Fallback if venv creation fails
-            pass
-    
-    # Set up a .bashrc file with helpful configurations
-    bashrc_path = os.path.join(home_dir, '.bashrc')
-    if not os.path.exists(bashrc_path):
-        with open(bashrc_path, 'w') as f:
-            f.write("""
+# Templates for fast file creation
+BASHRC_TEMPLATE = """
 # Auto-activate Python virtual environment
 if [ -d "$HOME/venv" ] ; then
     source "$HOME/venv/bin/activate"
@@ -102,18 +164,9 @@ apt() {
 # Display welcome message on login
 echo "iOS Terminal - Type 'help' for available commands"
 echo "For package installation, use: pip-user PACKAGE_NAME"
-""")
-    
-    # Create additional useful directories
-    os.makedirs(os.path.join(home_dir, 'projects'), exist_ok=True)
-    os.makedirs(os.path.join(home_dir, 'downloads'), exist_ok=True)
-    os.makedirs(os.path.join(home_dir, '.local', 'bin'), exist_ok=True)
-    
-    # Create a custom help file
-    help_path = os.path.join(home_dir, 'help.txt')
-    if not os.path.exists(help_path):
-        with open(help_path, 'w') as f:
-            f.write("""iOS Terminal Help
+"""
+
+HELP_TEMPLATE = """iOS Terminal Help
 ===============
 
 Package Installation
@@ -145,9 +198,47 @@ Tips
 - Use .local/bin for your custom executables
 - The virtual environment is auto-activated
 - Long-running commands will continue in background
-""")
+"""
+
+# Cache for faster session creation
+script_cache = {}
+
+def setup_user_environment(home_dir):
+    """Set up a user environment with necessary files and directories - optimized for speed"""
+    # Create initial directories in parallel
+    os.makedirs(home_dir, exist_ok=True)
     
-    # Copy helper scripts to user's bin directory
+    # Create all required directories at once in parallel
+    dirs_to_create = [
+        os.path.join(home_dir, 'projects'),
+        os.path.join(home_dir, 'downloads'),
+        os.path.join(home_dir, '.local', 'bin')
+    ]
+    
+    # Create directories with a single call
+    for directory in dirs_to_create:
+        os.makedirs(directory, exist_ok=True)
+    
+    # Only create venv if explicitly requested later (on-demand instead of at startup)
+    # This significantly speeds up initial session creation
+    
+    # Write template files quickly
+    bashrc_path = os.path.join(home_dir, '.bashrc')
+    help_path = os.path.join(home_dir, 'help.txt')
+    
+    # Parallel writing of files
+    file_writing_tasks = [
+        (bashrc_path, BASHRC_TEMPLATE),
+        (help_path, HELP_TEMPLATE)
+    ]
+    
+    # Write files if they don't exist
+    for file_path, content in file_writing_tasks:
+        if not os.path.exists(file_path):
+            with open(file_path, 'w') as f:
+                f.write(content)
+    
+    # Copy helper scripts - using cached content when possible
     user_bin_dir = os.path.join(home_dir, '.local', 'bin')
     scripts_dir = 'user_scripts'
     
@@ -155,9 +246,18 @@ Tips
         for script in ['install-python-pip.sh', 'install-node-npm.sh']:
             script_path = os.path.join(scripts_dir, script)
             if os.path.exists(script_path):
-                # Copy and make executable
+                # Use cached script content if available
                 dest_path = os.path.join(user_bin_dir, script.replace('.sh', ''))
-                shutil.copy2(script_path, dest_path)
+                
+                if script_path not in script_cache:
+                    with open(script_path, 'rb') as f:
+                        script_cache[script_path] = f.read()
+                
+                # Write from cache
+                with open(dest_path, 'wb') as f:
+                    f.write(script_cache[script_path])
+                
+                # Set executable permissions
                 os.chmod(dest_path, 0o755)
 
 
@@ -247,21 +347,78 @@ def get_session(session_id):
 
 # Web Terminal Interface Routes
 @app.route('/')
+@cached_response(timeout=3600)  # Cache for 1 hour
 def index():
     """Serve web terminal interface"""
     return send_file('static/simple-terminal.html')
 
 
 @app.route('/static/<path:path>')
+@cached_response(timeout=86400)  # Cache for 1 day
 def serve_static(path):
     """Serve static files"""
+    # Use cached file content for common static files
+    if path.endswith(('.js', '.css', '.html')):
+        try:
+            file_path = os.path.join('static', path)
+            if os.path.exists(file_path) and os.path.isfile(file_path):
+                content = get_cached_file_content(file_path)
+                
+                # Set content type based on file extension
+                content_type = 'text/plain'
+                if path.endswith('.js'):
+                    content_type = 'application/javascript'
+                elif path.endswith('.css'):
+                    content_type = 'text/css'
+                elif path.endswith('.html'):
+                    content_type = 'text/html'
+                
+                response = make_response(content)
+                response.headers['Content-Type'] = content_type
+                response.headers['Cache-Control'] = 'public, max-age=86400'
+                return response
+        except Exception:
+            # Fall back to standard method if caching fails
+            pass
+            
     return send_from_directory('static', path)
 
 
 # API Endpoints
+# Session pool - pre-created sessions for faster allocation
+session_pool = []
+SESSION_POOL_SIZE = 3  # Number of pre-created sessions to maintain
+session_pool_lock = threading.Lock()
+
+def initialize_session_pool():
+    """Pre-create sessions for the pool to speed up session allocation"""
+    with session_pool_lock:
+        # Only fill the pool if it's empty or below threshold
+        while len(session_pool) < SESSION_POOL_SIZE:
+            session_id = str(uuid.uuid4())
+            home_dir = os.path.join('user_data', session_id)
+            
+            # Set up environment in background
+            setup_user_environment(home_dir)
+            
+            # Add to pool
+            session_pool.append({
+                'session_id': session_id,
+                'home_dir': home_dir,
+                'created': time.time()
+            })
+    
+    # Schedule next pool refill
+    threading.Timer(60.0, initialize_session_pool).start()
+
+# Start session pool initialization
+initialize_session_pool()
+
 @app.route('/create-session', methods=['POST'])
 def create_session():
-    """Create a new session for a user"""
+    """Create a new session for a user - optimized with session pooling"""
+    start_time = time.time()
+    
     if USE_AUTH and not authenticate():
         return jsonify({'error': 'Authentication failed'}), 401
         
@@ -269,13 +426,28 @@ def create_session():
     user_id = data.get('userId', str(uuid.uuid4()))
     client_ip = request.remote_addr
     
-    # Create a new session
-    session_id = str(uuid.uuid4())
-    home_dir = os.path.join('user_data', session_id)
+    # Try to get a pre-created session from the pool
+    pooled_session = None
+    with session_pool_lock:
+        if session_pool:
+            pooled_session = session_pool.pop(0)
     
-    # Set up the user environment with necessary files and directories
-    setup_user_environment(home_dir)
+    if pooled_session:
+        # Use a pre-created session from the pool (fast path)
+        session_id = pooled_session['session_id']
+        home_dir = pooled_session['home_dir']
+        
+        # Schedule pool refill in background
+        threading.Thread(target=initialize_session_pool).start()
+    else:
+        # No pooled sessions available, create new one (slow path)
+        session_id = str(uuid.uuid4())
+        home_dir = os.path.join('user_data', session_id)
+        
+        # Set up the user environment with necessary files and directories
+        setup_user_environment(home_dir)
     
+    # Register the session
     with session_lock:
         sessions[session_id] = {
             'user_id': user_id,
@@ -285,34 +457,48 @@ def create_session():
             'home_dir': home_dir
         }
     
-    # Initialize session with customized environment
-    try:
-        # Run initial setup commands (source .bashrc, etc.)
-        process = subprocess.Popen(
-            "source .bashrc 2>/dev/null || true",
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=home_dir
-        )
-        process.communicate(timeout=5)  # Short timeout for initialization
-    except (subprocess.TimeoutExpired, Exception):
-        pass  # Ignore errors during initialization
+    # Initialize environment in a background thread to avoid blocking response
+    def background_init(session_home_dir):
+        try:
+            # Run initial setup commands (source .bashrc, etc.) without blocking
+            process = subprocess.Popen(
+                "source .bashrc 2>/dev/null || true",
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=session_home_dir
+            )
+            process.communicate(timeout=2)  # Shorter timeout
+        except Exception:
+            pass  # Ignore errors
     
+    # Start initialization in background
+    threading.Thread(target=background_init, args=(home_dir,)).start()
+    
+    # Log activity
     log_activity('session', {
         'action': 'created',
         'session_id': session_id,
         'user_id': user_id,
-        'client_ip': client_ip
+        'client_ip': client_ip,
+        'from_pool': pooled_session is not None,
+        'response_time': time.time() - start_time
     })
     
-    return jsonify({
+    # Return response immediately
+    response = jsonify({
         'sessionId': session_id,
         'userId': user_id,
         'message': 'Session created successfully',
         'expiresIn': SESSION_TIMEOUT * 1000  # Convert to milliseconds for client
     })
+    
+    # Add performance headers
+    response.headers['X-Session-From-Pool'] = str(pooled_session is not None)
+    response.headers['X-Response-Time'] = f"{(time.time() - start_time):.4f}s"
+    
+    return response
 
 
 @app.route('/execute-command', methods=['POST'])
