@@ -1,0 +1,7 @@
+#!/bin/bash
+echo -e "\033[0;34mEnhanced Terminal Help\033[0m"
+echo
+echo "Available commands:"
+echo "  ls       - List files with color"
+echo "  help     - Show this help"
+echo "  pkg      - Package management"
