@@ -456,23 +456,149 @@ def handle_execute_command(data):
         python_cmd = command.replace('"', '\\"')  # Escape double quotes
         command = f'python3 -c "{python_cmd}"'
     
-        # Special handling for OpenSSL commands - use our wrapper if available
+        
+    # Special handling for OpenSSL commands - use our wrapper if available
     if command.strip().startswith('openssl '):
-        # First, verify the user directory exists and create it if needed
-        if not os.path.exists(session['home_dir']):
-            try:
-                print(f"Creating missing user directory: {session['home_dir']}")
-                os.makedirs(session['home_dir'], exist_ok=True)
-                os.chmod(session['home_dir'], 0o755)  # Ensure directory is accessible
-                # Since we had to create the directory, set up the environment
-                setup_user_environment(session['home_dir'])
-            except Exception as e:
-                print(f"Error creating user directory: {str(e)}")
+        socketio.emit('command_output', {
+            'output': "Setting up OpenSSL environment...\n"
+        }, to=request.sid)
+        
+        # Force a complete environment setup instead of just checking for existence
+        try:
+            # Get absolute path for home_dir
+            abs_home_dir = os.path.abspath(session['home_dir'])
+            print(f"OpenSSL command - ensuring environment in: {abs_home_dir}")
+            
+            # Let the user know we're working on it
+            socketio.emit('command_output', {
+                'output': f"Preparing environment for OpenSSL...\n"
+            }, to=request.sid)
+            
+            # Run the setup with robust error handling
+            setup_result = setup_user_environment(abs_home_dir)
+            if not setup_result and setup_result is not None:  # Only if it explicitly failed (returned False)
                 socketio.emit('command_error', {
-                    'error': f"Could not access or create user directory: {str(e)}",
+                    'error': f"Failed to set up user environment. Please try again in a moment.",
                     'sessionRenewed': auto_renewed,
                     'newSessionId': session_id if auto_renewed else None
                 }, to=request.sid)
+                return
+                
+            # Find and prepare the OpenSSL wrapper with all possible methods
+            local_bin_dir = os.path.join(abs_home_dir, '.local', 'bin')
+            openssl_wrapper = os.path.join(local_bin_dir, 'openssl-wrapper')
+            source_wrapper = os.path.join('user_scripts', 'openssl-wrapper')
+            abs_source_wrapper = os.path.abspath(source_wrapper)
+            
+            # Extra diagnostic logging
+            print(f"OpenSSL wrapper paths:")
+            print(f"  Target: {openssl_wrapper}")
+            print(f"  Source: {source_wrapper}")
+            print(f"  Abs source: {abs_source_wrapper}")
+            
+            # Try multiple paths for the source wrapper
+            wrapper_source_paths = [
+                source_wrapper,
+                abs_source_wrapper,
+                '/app/user_scripts/openssl-wrapper',
+                os.path.join(os.getcwd(), 'user_scripts', 'openssl-wrapper')
+            ]
+            
+            wrapper_found = False
+            # Check all possible source paths
+            for src_path in wrapper_source_paths:
+                if os.path.exists(src_path):
+                    print(f"Found source wrapper at: {src_path}")
+                    wrapper_found = True
+                    # Try all copy methods with this source
+                    try:
+                        # Method 1: Direct file read/write
+                        with open(src_path, 'rb') as src:
+                            wrapper_content = src.read()
+                            with open(openssl_wrapper, 'wb') as dst:
+                                dst.write(wrapper_content)
+                        os.chmod(openssl_wrapper, 0o777)
+                        print(f"Successfully copied wrapper script (Method 1)")
+                        break  # Successfully copied
+                    except Exception as copy_error:
+                        print(f"Method 1 failed: {str(copy_error)}")
+                        try:
+                            # Method 2: shutil
+                            shutil.copy2(src_path, openssl_wrapper)
+                            os.chmod(openssl_wrapper, 0o777)
+                            print(f"Successfully copied wrapper script (Method 2)")
+                            break
+                        except Exception as copy_error:
+                            print(f"Method 2 failed: {str(copy_error)}")
+                            try:
+                                # Method 3: Shell command
+                                subprocess.run(["cp", src_path, openssl_wrapper], check=True)
+                                subprocess.run(["chmod", "777", openssl_wrapper], check=False)
+                                print(f"Successfully copied wrapper script (Method 3)")
+                                break
+                            except Exception as copy_error:
+                                print(f"All wrapper copy methods failed: {str(copy_error)}")
+            
+            if not wrapper_found:
+                print(f"ERROR: OpenSSL wrapper source was not found in any location!")
+                # List current directory contents
+                try:
+                    print(f"Current directory: {os.getcwd()}")
+                    print(f"Contents: {os.listdir('.')}")
+                    if os.path.exists('user_scripts'):
+                        print(f"user_scripts contents: {os.listdir('user_scripts')}")
+                except Exception as e:
+                    print(f"Error listing directories: {str(e)}")
+                
+                socketio.emit('command_output', {
+                    'output': "Warning: OpenSSL wrapper script not found. Using direct OpenSSL command.\n"
+                }, to=request.sid)
+            
+            # Verify the wrapper exists and is executable with extensive diagnostics
+            wrapper_status = "Not found"
+            if os.path.exists(openssl_wrapper):
+                if os.access(openssl_wrapper, os.X_OK):
+                    wrapper_status = "Found and executable"
+                else:
+                    wrapper_status = "Found but not executable"
+                    # Try to fix permissions again
+                    try:
+                        os.chmod(openssl_wrapper, 0o777)
+                        subprocess.run(["chmod", "777", openssl_wrapper], check=False)
+                        wrapper_status = "Permissions fixed"
+                    except Exception as e:
+                        print(f"Failed to fix permissions: {str(e)}")
+            
+            print(f"OpenSSL wrapper status: {wrapper_status}")
+            
+            # Now handle the actual command execution
+            if os.path.exists(openssl_wrapper) and os.access(openssl_wrapper, os.X_OK):
+                # Extract the openssl subcommand and arguments
+                openssl_parts = command.strip().split(' ')
+                if len(openssl_parts) > 1:
+                    openssl_cmd = ' '.join(openssl_parts[1:])
+                    # Use full path to wrapper and specify bash directly to avoid PATH issues
+                    command = f"/bin/bash {openssl_wrapper} {openssl_cmd}"
+                    print(f"Using OpenSSL wrapper: {command}")
+                    socketio.emit('command_output', {
+                        'output': "Using enhanced OpenSSL wrapper script...\n"
+                    }, to=request.sid)
+            else:
+                # Fallback to direct execution with preset passphrase for OpenSSL
+                print(f"Using direct openssl command (wrapper not available at {openssl_wrapper})")
+                socketio.emit('command_output', {
+                    'output': "Notice: Using direct OpenSSL command without wrapper.\n"
+                }, to=request.sid)
+                
+        except Exception as e:
+            print(f"Critical error in OpenSSL setup: {str(e)}")
+            socketio.emit('command_error', {
+                'error': f"Error setting up OpenSSL environment: {str(e)}",
+                'sessionRenewed': auto_renewed,
+                'newSessionId': session_id if auto_renewed else None
+            }, to=request.sid)
+            return
+
                 return
         
         # Ensure user .local/bin directory exists
@@ -929,16 +1055,54 @@ script_cache = {}
 def setup_user_environment(home_dir):
     """Set up a user environment with necessary files and directories - optimized for speed and reliability"""
     start_time = time.time()
+    success = False
+    
+    # Ensure home_dir is absolute path
+    if not home_dir.startswith('/'):
+        abs_home_dir = os.path.abspath(home_dir)
+        print(f"Converting relative path {home_dir} to absolute path {abs_home_dir}")
+        home_dir = abs_home_dir
     
     try:
-        print(f"Setting up user environment in {home_dir}")
-        # Create initial directories in parallel
-        os.makedirs(home_dir, exist_ok=True)
+        print(f"Setting up user environment in {home_dir} (Process ID: {os.getpid()}, User: {os.getuid()}, Group: {os.getgid()})")
+        
+        # Try to create the directory if it doesn't exist, with multiple methods for robustness
+        if not os.path.exists(home_dir):
+            try:
+                print(f"Creating directory {home_dir} with os.makedirs")
+                os.makedirs(home_dir, exist_ok=True)
+            except Exception as e:
+                print(f"Warning: Could not create directory with os.makedirs: {str(e)}")
+                try:
+                    # Try shell command as fallback
+                    print(f"Trying mkdir -p as fallback")
+                    subprocess.run(["mkdir", "-p", home_dir], check=True)
+                except Exception as e2:
+                    print(f"ERROR: Both directory creation methods failed: {str(e2)}")
+                    return False
+        
+        # Verify the directory exists now
+        if not os.path.exists(home_dir):
+            print(f"ERROR: Directory {home_dir} still does not exist after creation attempts")
+            # Try one more desperate measure - create parent directories one by one
+            try:
+                parent_dir = os.path.dirname(home_dir)
+                if not os.path.exists(parent_dir):
+                    print(f"Creating parent directory {parent_dir}")
+                    os.makedirs(parent_dir, exist_ok=True)
+                print(f"Creating directory {home_dir} directly")
+                os.mkdir(home_dir)
+            except Exception as e:
+                print(f"FATAL: Could not create directory {home_dir}: {str(e)}")
+                return False
         
         # Fix permissions - ensure all users can access the directory
         try:
             # Make directory and all subdirectories accessible
-            os.chmod(home_dir, 0o755)
+            print(f"Setting permissions on {home_dir}")
+            os.chmod(home_dir, 0o777)  # More permissive for debugging
+            # Try a shell command as well for extra assurance
+            subprocess.run(["chmod", "777", home_dir], check=False)
         except Exception as e:
             print(f"Warning: Could not set permissions for {home_dir}: {str(e)}")
         
@@ -953,14 +1117,37 @@ def setup_user_environment(home_dir):
             os.path.join(home_dir, '.fifo'),  # For interactive commands
         ]
         
-        # Create directories with a single call
+        # Create all required directories with robust error handling
         for directory in dirs_to_create:
-            os.makedirs(directory, exist_ok=True)
-            # Set proper permissions
             try:
-                os.chmod(directory, 0o755)
-            except Exception:
-                pass  # Ignore permission errors
+                print(f"Creating directory: {directory}")
+                os.makedirs(directory, exist_ok=True)
+                
+                # Set proper permissions and check if successful
+                try:
+                    os.chmod(directory, 0o777)  # More permissive for debugging
+                    # Also try shell chmod for maximum compatibility
+                    subprocess.run(["chmod", "-R", "777", directory], check=False)
+                    
+                    # Verify directory exists and is writable
+                    if not os.path.exists(directory):
+                        print(f"WARNING: Directory {directory} does not exist after creation!")
+                    elif not os.access(directory, os.W_OK):
+                        print(f"WARNING: Directory {directory} is not writable!")
+                    else:
+                        print(f"Successfully created and set permissions for {directory}")
+                except Exception as e:
+                    print(f"Warning: Permission setting failed for {directory}: {str(e)}")
+            except Exception as e:
+                print(f"ERROR: Failed to create directory {directory}: {str(e)}")
+                # Try the shell command as a fallback
+                try:
+                    subprocess.run(["mkdir", "-p", directory], check=True)
+                    subprocess.run(["chmod", "777", directory], check=False)
+                    print(f"Created directory {directory} using shell fallback")
+                except Exception as e2:
+                    print(f"CRITICAL: Both methods failed for {directory}: {str(e2)}")
+                    # Continue attempting with other directories
         
         # Write template files quickly - use try/except for each operation
         user_bin_dir = os.path.join(home_dir, '.local', 'bin')
@@ -1010,34 +1197,101 @@ fi
         except Exception as e:
             print(f"Warning: Could not write profile file: {str(e)}")
         
-        # Copy all user scripts for better functionality
+        # Copy all user scripts for better functionality with robust error handling
         scripts_dir = 'user_scripts'
+        abs_scripts_dir = os.path.abspath(scripts_dir)
+        print(f"Copying scripts from {abs_scripts_dir} to {user_bin_dir}")
         
-        if os.path.exists(scripts_dir):
-            # Copy all scripts, not just specific ones
-            for script_file in os.listdir(scripts_dir):
+        # First ensure the user_bin_dir exists (extra check)
+        if not os.path.exists(user_bin_dir):
+            try:
+                print(f"Re-creating user bin dir: {user_bin_dir}")
+                os.makedirs(user_bin_dir, exist_ok=True)
+                os.chmod(user_bin_dir, 0o777)
+            except Exception as e:
+                print(f"CRITICAL: Could not create bin directory: {str(e)}")
+                # Try shell commands as fallback
                 try:
-                    script_path = os.path.join(scripts_dir, script_file)
-                    if os.path.isfile(script_path):
-                        # Use cached script content if available for performance
-                        dest_path = os.path.join(user_bin_dir, script_file)
-                        
-                        # Skip if destination already exists and has same size (optimization)
-                        if os.path.exists(dest_path) and os.path.getsize(dest_path) == os.path.getsize(script_path):
-                            continue
-                            
-                        if script_path not in script_cache:
-                            with open(script_path, 'rb') as f:
-                                script_cache[script_path] = f.read()
-                        
-                        # Write from cache
-                        with open(dest_path, 'wb') as f:
-                            f.write(script_cache[script_path])
-                        
-                        # Set executable permissions
-                        os.chmod(dest_path, 0o755)
+                    subprocess.run(["mkdir", "-p", user_bin_dir], check=True)
+                    subprocess.run(["chmod", "777", user_bin_dir], check=False)
+                except Exception as e2:
+                    print(f"FATAL: Bin directory creation completely failed: {str(e2)}")
+                    return False
+        
+        # Verify the scripts source directory exists
+        if not os.path.exists(scripts_dir):
+            print(f"CRITICAL: Scripts directory {scripts_dir} does not exist!")
+            # Try with absolute path
+            if os.path.exists(abs_scripts_dir):
+                scripts_dir = abs_scripts_dir
+                print(f"Using absolute path instead: {scripts_dir}")
+            else:
+                print(f"ERROR: Could not find scripts directory at {abs_scripts_dir} either")
+                # Try listing directories in current path for debugging
+                try:
+                    print(f"Current directory: {os.getcwd()}")
+                    print(f"Contents: {os.listdir('.')}")
                 except Exception as e:
-                    print(f"Warning: Failed to copy script {script_file}: {str(e)}")
+                    print(f"Error listing directory: {str(e)}")
+                return False
+        
+        # Now copy all scripts with extensive error handling
+        script_files = []
+        try:
+            script_files = os.listdir(scripts_dir)
+            print(f"Found {len(script_files)} script files in {scripts_dir}")
+        except Exception as e:
+            print(f"ERROR: Could not list scripts directory: {str(e)}")
+            return False
+        
+        # Copy each script file with multiple fallback methods
+        for script_file in script_files:
+            try:
+                script_path = os.path.join(scripts_dir, script_file)
+                if os.path.isfile(script_path):
+                    dest_path = os.path.join(user_bin_dir, script_file)
+                    print(f"Copying script: {script_path} -> {dest_path}")
+                    
+                    # Try multiple copy methods
+                    copy_success = False
+                    
+                    # Method 1: Try direct file read/write
+                    try:
+                        with open(script_path, 'rb') as src:
+                            script_content = src.read()
+                            with open(dest_path, 'wb') as dst:
+                                dst.write(script_content)
+                            os.chmod(dest_path, 0o777)
+                            copy_success = True
+                            print(f"Successfully copied {script_file} (Method 1)")
+                    except Exception as copy_error:
+                        print(f"Method 1 failed: {str(copy_error)}")
+                    
+                    # Method 2: Try shutil if method 1 failed
+                    if not copy_success:
+                        try:
+                            shutil.copy2(script_path, dest_path)
+                            os.chmod(dest_path, 0o777)
+                            copy_success = True
+                            print(f"Successfully copied {script_file} (Method 2)")
+                        except Exception as copy_error:
+                            print(f"Method 2 failed: {str(copy_error)}")
+                    
+                    # Method 3: Shell cp command as last resort
+                    if not copy_success:
+                        try:
+                            subprocess.run(["cp", script_path, dest_path], check=True)
+                            subprocess.run(["chmod", "777", dest_path], check=False)
+                            copy_success = True
+                            print(f"Successfully copied {script_file} (Method 3)")
+                        except Exception as copy_error:
+                            print(f"Method 3 failed: {str(copy_error)}")
+                    
+                    # Check if any method succeeded
+                    if not copy_success:
+                        print(f"CRITICAL: All methods failed to copy {script_file}")
+            except Exception as e:
+                print(f"Warning: Failed to process script {script_file}: {str(e)}")
         
         # Set up enhanced environment using our new script if available
         setup_script = os.path.join(user_bin_dir, 'setup-enhanced-environment')
