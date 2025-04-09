@@ -11,6 +11,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, send_file, render_template
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
+from file_management import register_file_management_endpoints
 
 app = Flask(__name__, static_folder='static')
 CORS(app)  # Enable CORS for all routes
@@ -385,6 +386,15 @@ def execute_command():
         except Exception:
             pass  # Fall through to regular command execution
     
+    elif command.strip() == 'termux-help':
+        # Special case for Termux help command
+        termux_prefix = os.path.join(session['home_dir'], 'termux', 'data', 'data', 'com.termux', 'files', 'usr')
+        help_path = os.path.join(termux_prefix, 'bin', 'termux-help')
+        if os.path.exists(help_path):
+            command = f"bash {help_path}"
+        else:
+            return jsonify({'output': 'Termux environment not set up yet. Run setup-termux first.'})
+    
     elif command.strip() == 'install-python':
         # Run the Python setup script
         script_path = os.path.join(session['home_dir'], '.local', 'bin', 'install-python-pip')
@@ -403,6 +413,16 @@ def execute_command():
         else:
             return jsonify({
                 'error': 'Node.js installation helper script not found. Please contact the administrator.'
+            }), 500
+            
+    elif command.strip() == 'setup-termux':
+        # Run the Termux environment setup script
+        script_path = os.path.join(session['home_dir'], '.local', 'bin', 'setup-termux-env')
+        if os.path.exists(script_path):
+            command = f"bash {script_path}"
+        else:
+            return jsonify({
+                'error': 'Termux environment setup script not found. Please contact the administrator.'
             }), 500
     
     # Prevent potentially dangerous or resource-intensive commands
@@ -433,6 +453,23 @@ def execute_command():
         'command': command
     })
     
+    # Intercept apt/apt-get commands and redirect to pkg
+    if command.strip().startswith('apt ') or command.strip().startswith('apt-get '):
+        command = command.replace('apt ', 'pkg ').replace('apt-get ', 'pkg ')
+    
+    # Improve Python script execution
+    if command.strip().startswith('python ') or command.strip().startswith('python3 '):
+        parts = command.strip().split()
+        if len(parts) >= 2 and (parts[1].endswith('.py') or '-m' in command):
+            # Running a script or module - use python-import instead
+            command = command.replace('python ', 'python-import ').replace('python3 ', 'python-import ')
+            
+            # Also automatically fix the shebang if it's a file
+            if len(parts) >= 2 and parts[1].endswith('.py') and os.path.exists(os.path.join(session['home_dir'], parts[1])):
+                script_path = parts[1]
+                fix_cmd = f"if [ -x '$HOME/.local/bin/termux-fix-shebang' ]; then $HOME/.local/bin/termux-fix-shebang {script_path} > /dev/null 2>&1; fi; "
+                command = fix_cmd + command
+    
     # Terminate any existing process for this session
     terminate_process(session_id)
     
@@ -440,10 +477,17 @@ def execute_command():
         # Create a working directory for this session if it doesn't exist
         os.makedirs(session['home_dir'], exist_ok=True)
         
-        # Handle special command: pip install (convert to user installation)
-        if command.strip().startswith('pip install ') and '--user' not in command:
-            # Modify to use --user flag for installing in user directory
-            command = command.replace('pip install ', 'pip install --user ')
+        # Handle special command: pip install (use pip-termux when available)
+        if command.strip().startswith('pip install '):
+            # Check if we have pip-termux available
+            pip_termux_path = os.path.join(session['home_dir'], '.local', 'bin', 'pip-termux')
+            if os.path.exists(pip_termux_path) and not command.strip().startswith('pip-termux'):
+                if '--user' in command:
+                    command = command.replace('pip install ', 'pip-termux install ')
+                else:
+                    command = command.replace('pip install ', 'pip-termux install --user ')
+            elif '--user' not in command:
+                command = command.replace('pip install ', 'pip install --user ')
         
         # Add environment variables to help user-level installations
         env = os.environ.copy()
@@ -573,10 +617,20 @@ def health_check():
     })
 
 
+# Register file management endpoints with Flask app
+register_file_management_endpoints(app, get_session)
+
+# Serve the file browser interface
+@app.route('/files-browser')
+def file_browser():
+    """Serve the file browser interface"""
+    return send_file('static/file-browser.html')
+
 if __name__ == '__main__':
     print(f"Flask Terminal Server running on port {PORT}")
     print(f"Debug mode: {DEBUG}")
     print(f"Authentication enabled: {USE_AUTH}")
     print(f"Web terminal available at http://localhost:{PORT}")
+    print(f"File browser available at http://localhost:{PORT}/files-browser")
     
     app.run(host='0.0.0.0', port=PORT, debug=DEBUG)

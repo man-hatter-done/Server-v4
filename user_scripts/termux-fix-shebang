@@ -1,0 +1,129 @@
+#!/bin/bash
+# Rewrite shebangs in scripts to make them work with real Termux-like paths
+# This allows Python import to work correctly across all scripts
+
+set -e -u
+
+# Define colors for output
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+if [ $# != 1 ]; then
+	echo -e "${RED}Usage: termux-fix-shebang <file>${NC}"
+	echo "Rewrite script shebangs to use the correct Termux paths"
+	exit 1
+fi
+
+file=$1
+termux_prefix="$HOME/termux/data/data/com.termux/files/usr"
+
+if ! [ -f "$file" ]; then
+	echo -e "${RED}No such file: $file${NC}"
+	exit 1
+fi
+
+# Check that we can read and write to the file
+if [ ! -r "$file" -o ! -w "$file" ]; then
+	echo -e "${RED}Cannot read or write to file: $file${NC}"
+	exit 1
+fi
+
+# Look for shebang line
+shebang=$(sed -n '1s/^#!//p' "$file")
+if [ -z "$shebang" ]; then
+	# No shebang, let's add one if it's a Python file
+	if [[ "$file" == *.py ]]; then
+		echo -e "${YELLOW}Adding Python shebang to file: $file${NC}"
+		sed -i '1i#!/usr/bin/env python-import' "$file"
+		chmod +x "$file"
+		echo -e "${GREEN}Added python-import shebang to: $file${NC}"
+	else
+		echo -e "${YELLOW}No shebang in file: $file${NC}"
+	fi
+	exit 0
+fi
+
+# Strip arguments for the path to the command
+command=$(echo "$shebang" | awk '{print $1}')
+rest=$(echo "$shebang" | cut -c $((${#command} + 1))-)
+new_path=""
+
+echo -e "${BLUE}Processing shebang in file: $file${NC}"
+echo -e "${YELLOW}Original: #!$command$rest${NC}"
+
+case "$command" in
+	*/python*|*python*|*/python2*|*/python3*)
+		# Always convert Python scripts to use the import wrapper
+		echo -e "${BLUE}Converting Python script to use python-import...${NC}"
+		sed -i "1s|^#!.*|#!/usr/bin/env python-import|" "$file"
+		chmod +x "$file"
+		echo -e "${GREEN}Converted shebang to: #!/usr/bin/env python-import${NC}"
+		exit 0
+		;;
+	*/python-import|*/usr/bin/env python-import)
+		# Already fixed
+		echo -e "${GREEN}Shebang already using python-import: $file${NC}"
+		exit 0
+		;;
+	*/perl)
+		new_path=$termux_prefix/bin/perl
+		;;
+	*/bash)
+		new_path=$termux_prefix/bin/bash
+		;;
+	*/sh)
+		new_path=$termux_prefix/bin/sh
+		;;
+	*/ruby)
+		new_path=$termux_prefix/bin/ruby
+		;;
+	*/node|*/nodejs)
+		new_path=$termux_prefix/bin/node
+		;;
+	*/php)
+		new_path=$termux_prefix/bin/php
+		;;
+	*/lua)
+		new_path=$termux_prefix/bin/lua
+		;;
+	*/usr/bin/env*)
+		# Handle /usr/bin/env style shebangs
+		env_cmd=$(echo "$command" | sed 's|.*/env||g' | xargs)
+		if [[ "$env_cmd" == "python"* ]]; then
+			echo -e "${BLUE}Converting env Python script to use python-import...${NC}"
+			sed -i "1s|^#!.*|#!/usr/bin/env python-import|" "$file"
+			chmod +x "$file"
+			echo -e "${GREEN}Converted shebang to: #!/usr/bin/env python-import${NC}"
+			exit 0
+		else
+			# Keep using env but ensure executable exists in Termux path
+			if [ -x "$termux_prefix/bin/$env_cmd" ]; then
+				echo -e "${GREEN}Keeping env shebang for: $env_cmd${NC}"
+				exit 0
+			else
+				echo -e "${YELLOW}Warning: $env_cmd not found in Termux bin directory${NC}"
+				echo -e "${YELLOW}Leaving shebang unchanged${NC}"
+				exit 0
+			fi
+		fi
+		;;
+	*)
+		# For any other command, check if it exists in Termux bin
+		command_name=$(basename "$command")
+		if [ -x "$termux_prefix/bin/$command_name" ]; then
+			new_path=$termux_prefix/bin/$command_name
+		else
+			echo -e "${YELLOW}Warning: Unknown shebang command: $command${NC}"
+			echo -e "${YELLOW}Leaving shebang unchanged${NC}"
+			exit 0
+		fi
+		;;
+esac
+
+if [ -n "$new_path" ]; then
+	sed -i "1s|^#!.*|#!$new_path$rest|" "$file"
+	echo -e "${GREEN}Rewritten shebang to: #!$new_path$rest${NC}"
+fi
