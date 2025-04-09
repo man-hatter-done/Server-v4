@@ -1,4 +1,4 @@
-// Enhanced Terminal functionality for iOS Terminal Web Interface
+// Enhanced Terminal functionality for iOS Terminal Web Interface with WebSocket support
 
 // Command history and state management
 let commandHistory = [];
@@ -6,6 +6,10 @@ let historyPosition = -1;
 let currentCommand = '';
 let isExecuting = false;
 let currentWorkingDirectory = '~';
+
+// Socket.IO connection
+let socket = null;
+let isWebSocketMode = false;
 
 // Store session information
 let currentSession = {
@@ -89,12 +93,96 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
+    // Initialize Socket.IO if available
+    initializeSocket();
+    
     // Create initial session
     createNewSession();
     
     // Focus input
     commandInput.focus();
 });
+
+// Initialize Socket.IO connection
+function initializeSocket() {
+    try {
+        // Check if Socket.IO is available
+        if (typeof io !== 'undefined') {
+            setStatus('connecting');
+            
+            // Connect to Socket.IO server
+            socket = io(window.location.origin, {
+                transports: ['websocket'],
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000,
+                timeout: 10000
+            });
+            
+            // Connection events
+            socket.on('connect', () => {
+                console.log('Socket connected:', socket.id);
+                setStatus('connected');
+                isWebSocketMode = true;
+                
+                // Join session room if we have a session
+                if (currentSession.id) {
+                    socket.emit('join_session', { session_id: currentSession.id });
+                }
+                
+                addTerminalText('🔌 Connected using WebSockets for real-time interaction', 'system');
+            });
+            
+            socket.on('disconnect', () => {
+                console.log('Socket disconnected');
+                setStatus('disconnected');
+            });
+            
+            socket.on('connect_error', (error) => {
+                console.error('Socket connection error:', error);
+                setStatus('error');
+                isWebSocketMode = false;
+                
+                // Fall back to HTTP mode
+                addTerminalText('WebSocket connection failed, falling back to HTTP mode', 'warning');
+            });
+            
+            // Terminal-specific events
+            socket.on('session_created', (data) => {
+                handleSocketSessionCreated(data);
+            });
+            
+            socket.on('command_output', (data) => {
+                handleSocketCommandOutput(data);
+            });
+            
+            socket.on('command_error', (data) => {
+                handleSocketCommandError(data);
+            });
+            
+            socket.on('command_complete', (data) => {
+                handleSocketCommandComplete(data);
+            });
+            
+            socket.on('session_expired', (data) => {
+                handleSocketSessionExpired(data);
+            });
+            
+            socket.on('working_directory', (data) => {
+                if (data.path) {
+                    currentWorkingDirectory = data.path;
+                    updatePrompt();
+                }
+            });
+        } else {
+            console.log('Socket.IO not available, using HTTP mode');
+            isWebSocketMode = false;
+        }
+    } catch (error) {
+        console.error('Error initializing Socket.IO:', error);
+        isWebSocketMode = false;
+    }
+}
 
 // Check if user is selecting text
 function isSelectingText() {
@@ -156,12 +244,30 @@ function setStatus(status) {
 
 // Create a new terminal session
 async function createNewSession() {
+    // Clear any existing session information
+    currentSession = {
+        id: null,
+        created: null,
+        lastActivity: null,
+        expiresIn: null,
+        reconnectAttempts: 0
+    };
+    
+    setStatus('connecting');
+    showProgress(true);
+    addTerminalText('Creating new terminal session...', 'system');
+    
+    // Use WebSockets if available
+    if (isWebSocketMode && socket && socket.connected) {
+        // Request new session via Socket.IO
+        socket.emit('create_session', {
+            userId: 'web-terminal-' + Date.now()
+        });
+        return;
+    }
+    
+    // Fall back to HTTP mode
     try {
-        setStatus('connecting');
-        showProgress(true);
-        
-        addTerminalText('Creating new terminal session...', 'system');
-        
         const response = await fetch(`${API_BASE_URL}/create-session`, {
             method: 'POST',
             headers: {
@@ -332,30 +438,41 @@ async function executeCommand(command, retryCount = 0, isRetry = false) {
         return;
     }
     
+    // Only display the command if this is not a retry attempt
+    if (!isRetry) {
+        addTerminalText(command, 'command');
+    }
+    
+    // Set executing state
+    isExecuting = true;
+    setStatus('executing');
+    showProgress(true);
+    
+    // Check if we have a valid session
+    if (!currentSession.id) {
+        addTerminalText('No active session. Creating new session...', 'system');
+        await createNewSession();
+        if (!currentSession.id) {
+            addTerminalText('Failed to create session. Please try again.', 'error');
+            return;
+        }
+    }
+    
+    // Use WebSockets if available
+    if (isWebSocketMode && socket && socket.connected) {
+        // Send command to server via Socket.IO
+        socket.emit('execute_command', {
+            command: command,
+            session_id: currentSession.id
+        });
+        return;
+    }
+    
+    // Fall back to HTTP mode if WebSockets not available
     const MAX_RETRIES = 3;
     const RETRY_DELAY = 1000; // 1 second delay between retries
     
     try {
-        // Only display the command if this is not a retry attempt
-        if (!isRetry) {
-            addTerminalText(command, 'command');
-        }
-        
-        // Set executing state
-        isExecuting = true;
-        setStatus('executing');
-        showProgress(true);
-        
-        // Check if we have a valid session
-        if (!currentSession.id) {
-            addTerminalText('No active session. Creating new session...', 'system');
-            await createNewSession();
-            if (!currentSession.id) {
-                addTerminalText('Failed to create session. Please try again.', 'error');
-                return;
-            }
-        }
-        
         // Add a timeout to detect hanging commands
         const timeout = setTimeout(() => {
             // Not aborting the fetch, but providing visual feedback
@@ -506,6 +623,19 @@ function addTerminalText(text, type = 'output') {
         
         entryDiv.appendChild(promptSpan);
         entryDiv.appendChild(commandSpan);
+    } else if (type === 'output-stream') {
+        // For streaming output (WebSockets), append to the last output element if it exists
+        const lastEntry = terminalOutput.lastElementChild;
+        if (lastEntry && lastEntry.classList.contains('output-stream')) {
+            lastEntry.textContent += text;
+            
+            // Scroll to bottom
+            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+            return;
+        }
+        
+        // Otherwise create a new output element
+        entryDiv.textContent = text;
     } else {
         // Special handling for different output types
         entryDiv.innerHTML = text;
@@ -515,6 +645,132 @@ function addTerminalText(text, type = 'output') {
     
     // Scroll to bottom
     terminalOutput.scrollTop = terminalOutput.scrollHeight;
+}
+
+// Socket.IO-specific event handlers
+function handleSocketSessionCreated(data) {
+    showProgress(false);
+    
+    if (data.error) {
+        setStatus('error');
+        addTerminalText(`Error creating session: ${data.error}`, 'error');
+        return;
+    }
+    
+    // Store session information
+    currentSession = {
+        id: data.sessionId,
+        created: new Date(),
+        lastActivity: new Date(),
+        expiresIn: data.expiresIn,
+        reconnectAttempts: 0
+    };
+    
+    // Join session room
+    socket.emit('join_session', { session_id: data.sessionId });
+    
+    // Update session info display
+    updateSessionInfo();
+    setStatus('connected');
+    
+    // Update terminal prompt with working directory
+    if (data.workingDirectory) {
+        currentWorkingDirectory = data.workingDirectory;
+    }
+    updatePrompt();
+    
+    // Welcome message
+    addTerminalText('Session created successfully.', 'success');
+    addTerminalText('\n📱 Welcome to iOS Terminal', 'welcome');
+    addTerminalText('Type commands and press Enter to execute.', 'system');
+    addTerminalText('Using WebSockets for real-time command execution.', 'system');
+    addTerminalText('Use up/down arrows to navigate command history.', 'system');
+    addTerminalText('Type "help" for available commands.', 'system');
+    addTerminalText('\nSome commands to try:', 'system');
+    addTerminalText('  ls, pwd, echo $PATH', 'example');
+    addTerminalText('  python3 --version', 'example');
+    addTerminalText('  mkdir test && cd test && touch file.txt && ls -la', 'example');
+    addTerminalText('', 'spacer');
+}
+
+function handleSocketCommandOutput(data) {
+    if (data.output) {
+        addTerminalText(data.output, 'output-stream');
+    }
+    
+    // Update session last activity
+    if (currentSession && currentSession.id) {
+        currentSession.lastActivity = new Date();
+        updateSessionInfo();
+    }
+    
+    // If session was renewed, update session info
+    if (data.sessionRenewed && data.newSessionId) {
+        addTerminalText(`Session renewed with ID: ${data.newSessionId.substring(0, 8)}...`, 'system');
+        currentSession.id = data.newSessionId;
+        currentSession.created = new Date();
+        updateSessionInfo();
+        
+        // Join the new session room
+        socket.emit('join_session', { session_id: data.newSessionId });
+    }
+}
+
+function handleSocketCommandError(data) {
+    setStatus('connected');
+    showProgress(false);
+    isExecuting = false;
+    
+    if (data.error) {
+        addTerminalText(data.error, 'error');
+    }
+    
+    if (data.exitCode) {
+        addTerminalText(`Command exited with code: ${data.exitCode}`, 'system');
+    }
+    
+    // If session was renewed, update session info
+    if (data.sessionRenewed && data.newSessionId) {
+        addTerminalText(`Session renewed with ID: ${data.newSessionId.substring(0, 8)}...`, 'system');
+        currentSession.id = data.newSessionId;
+        currentSession.created = new Date();
+        updateSessionInfo();
+        
+        // Join the new session room
+        socket.emit('join_session', { session_id: data.newSessionId });
+    }
+}
+
+function handleSocketCommandComplete(data) {
+    setStatus('connected');
+    showProgress(false);
+    isExecuting = false;
+    
+    // Update session last activity
+    currentSession.lastActivity = new Date();
+    updateSessionInfo();
+    
+    // Check if we need to update the working directory
+    if (data.workingDirectory) {
+        currentWorkingDirectory = data.workingDirectory;
+        updatePrompt();
+    }
+    
+    // If session was renewed, update session info
+    if (data.sessionRenewed && data.newSessionId) {
+        addTerminalText(`Session renewed with ID: ${data.newSessionId.substring(0, 8)}...`, 'system');
+        currentSession.id = data.newSessionId;
+        currentSession.created = new Date();
+        updateSessionInfo();
+        
+        // Join the new session room
+        socket.emit('join_session', { session_id: data.newSessionId });
+    }
+}
+
+function handleSocketSessionExpired(data) {
+    addTerminalText('Session expired. Creating new session...', 'system');
+    createNewSession();
 }
 
 // Handle command input (keydown event)
@@ -601,10 +857,36 @@ async function endSession() {
         return;
     }
     
-    try {
-        setStatus('connecting');
-        showProgress(true);
+    setStatus('connecting');
+    showProgress(true);
+    
+    // Use WebSockets if available
+    if (isWebSocketMode && socket && socket.connected) {
+        // Send session termination request via Socket.IO
+        socket.emit('end_session', {
+            session_id: currentSession.id
+        });
         
+        // Clear session info locally
+        currentSession = {
+            id: null,
+            created: null,
+            lastActivity: null,
+            expiresIn: null,
+            reconnectAttempts: 0
+        };
+        
+        updateSessionInfo();
+        setStatus('disconnected');
+        showProgress(false);
+        
+        addTerminalText('Session terminated.', 'system');
+        addTerminalText('Create a new session to continue.', 'system');
+        return;
+    }
+    
+    // Fall back to HTTP mode
+    try {
         const response = await fetch(`${API_BASE_URL}/session`, {
             method: 'DELETE',
             headers: {

@@ -66,6 +66,10 @@ socket_sessions = {}
 # Map of terminal session IDs to active command processes
 socket_processes = {}
 
+# Add at app startup to enable WebSocket support
+import eventlet
+eventlet.monkey_patch()
+
 # WebSocket event handlers
 @socketio.on('connect')
 def handle_connect():

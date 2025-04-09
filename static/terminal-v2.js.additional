@@ -1,0 +1,544 @@
+// Socket.IO-specific event handlers
+function handleSocketSessionCreated(data) {
+    showProgress(false);
+    
+    if (data.error) {
+        setStatus('error');
+        addTerminalText(`Error creating session: ${data.error}`, 'error');
+        return;
+    }
+    
+    // Store session information
+    currentSession = {
+        id: data.sessionId,
+        created: new Date(),
+        lastActivity: new Date(),
+        expiresIn: data.expiresIn,
+        reconnectAttempts: 0
+    };
+    
+    // Join session room
+    socket.emit('join_session', { session_id: data.sessionId });
+    
+    // Update session info display
+    updateSessionInfo();
+    setStatus('connected');
+    
+    // Update terminal prompt with working directory
+    if (data.workingDirectory) {
+        currentWorkingDirectory = data.workingDirectory;
+    }
+    updatePrompt();
+    
+    // Welcome message
+    addTerminalText('Session created successfully.', 'success');
+    addTerminalText('\n📱 Welcome to iOS Terminal', 'welcome');
+    addTerminalText('Type commands and press Enter to execute.', 'system');
+    addTerminalText('Using WebSockets for real-time command execution.', 'system');
+    addTerminalText('Use up/down arrows to navigate command history.', 'system');
+    addTerminalText('Type "help" for available commands.', 'system');
+    addTerminalText('\nSome commands to try:', 'system');
+    addTerminalText('  ls, pwd, echo $PATH', 'example');
+    addTerminalText('  python3 --version', 'example');
+    addTerminalText('  mkdir test && cd test && touch file.txt && ls -la', 'example');
+    addTerminalText('', 'spacer');
+}
+
+function handleSocketCommandOutput(data) {
+    if (data.output) {
+        addTerminalText(data.output, 'output-stream');
+    }
+    
+    // Update session last activity
+    if (currentSession && currentSession.id) {
+        currentSession.lastActivity = new Date();
+        updateSessionInfo();
+    }
+    
+    // If session was renewed, update session info
+    if (data.sessionRenewed && data.newSessionId) {
+        addTerminalText(`Session renewed with ID: ${data.newSessionId.substring(0, 8)}...`, 'system');
+        currentSession.id = data.newSessionId;
+        currentSession.created = new Date();
+        updateSessionInfo();
+        
+        // Join the new session room
+        socket.emit('join_session', { session_id: data.newSessionId });
+    }
+}
+
+function handleSocketCommandError(data) {
+    setStatus('connected');
+    showProgress(false);
+    isExecuting = false;
+    
+    if (data.error) {
+        addTerminalText(data.error, 'error');
+    }
+    
+    if (data.exitCode) {
+        addTerminalText(`Command exited with code: ${data.exitCode}`, 'system');
+    }
+    
+    // If session was renewed, update session info
+    if (data.sessionRenewed && data.newSessionId) {
+        addTerminalText(`Session renewed with ID: ${data.newSessionId.substring(0, 8)}...`, 'system');
+        currentSession.id = data.newSessionId;
+        currentSession.created = new Date();
+        updateSessionInfo();
+        
+        // Join the new session room
+        socket.emit('join_session', { session_id: data.newSessionId });
+    }
+}
+
+function handleSocketCommandComplete(data) {
+    setStatus('connected');
+    showProgress(false);
+    isExecuting = false;
+    
+    // Update session last activity
+    currentSession.lastActivity = new Date();
+    updateSessionInfo();
+    
+    // Check if we need to update the working directory
+    if (data.workingDirectory) {
+        currentWorkingDirectory = data.workingDirectory;
+        updatePrompt();
+    }
+    
+    // If session was renewed, update session info
+    if (data.sessionRenewed && data.newSessionId) {
+        addTerminalText(`Session renewed with ID: ${data.newSessionId.substring(0, 8)}...`, 'system');
+        currentSession.id = data.newSessionId;
+        currentSession.created = new Date();
+        updateSessionInfo();
+        
+        // Join the new session room
+        socket.emit('join_session', { session_id: data.newSessionId });
+    }
+}
+
+function handleSocketSessionExpired(data) {
+    addTerminalText('Session expired. Creating new session...', 'system');
+    createNewSession();
+}
+
+// Modify createNewSession function to use Socket.IO when available
+function createNewSession() {
+    // Clear any existing session information
+    currentSession = {
+        id: null,
+        created: null,
+        lastActivity: null,
+        expiresIn: null,
+        reconnectAttempts: 0
+    };
+    
+    setStatus('connecting');
+    showProgress(true);
+    addTerminalText('Creating new terminal session...', 'system');
+    
+    // Use WebSockets if available
+    if (isWebSocketMode && socket && socket.connected) {
+        // Request new session via Socket.IO
+        socket.emit('create_session', {
+            userId: 'web-terminal-' + Date.now()
+        });
+        return;
+    }
+    
+    // Fall back to HTTP mode
+    httpCreateNewSession();
+}
+
+// Original HTTP implementation of createNewSession
+function httpCreateNewSession() {
+    fetch(`${API_BASE_URL}/create-session`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            userId: 'web-terminal-' + Date.now()
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.error) {
+            setStatus('error');
+            addTerminalText(`Error: ${data.error}`, 'error');
+            return;
+        }
+        
+        // Store session information
+        currentSession = {
+            id: data.sessionId,
+            created: new Date(),
+            lastActivity: new Date(),
+            expiresIn: data.expiresIn,
+            reconnectAttempts: 0
+        };
+        
+        // Update session info display
+        updateSessionInfo();
+        setStatus('connected');
+        
+        // Update terminal prompt with working directory
+        updatePrompt();
+        
+        // Welcome message
+        addTerminalText('Session created successfully.', 'success');
+        addTerminalText('\n📱 Welcome to iOS Terminal', 'welcome');
+        addTerminalText('Type commands and press Enter to execute.', 'system');
+        addTerminalText('Use up/down arrows to navigate command history.', 'system');
+        addTerminalText('Type "help" for available commands.', 'system');
+        addTerminalText('\nSome commands to try:', 'system');
+        addTerminalText('  ls, pwd, echo $PATH', 'example');
+        addTerminalText('  python3 --version', 'example');
+        addTerminalText('  mkdir test && cd test && touch file.txt && ls -la', 'example');
+        addTerminalText('', 'spacer');
+    })
+    .catch(error => {
+        setStatus('error');
+        addTerminalText(`Connection error: ${error.message}`, 'error');
+        addTerminalText('Retrying in 5 seconds...', 'system');
+        console.error('Session creation error:', error);
+        
+        // Retry connection after 5 seconds
+        currentSession.reconnectAttempts++;
+        const retryDelay = Math.min(5000 * currentSession.reconnectAttempts, 30000);
+        
+        setTimeout(() => {
+            if (!currentSession.id) {
+                createNewSession();
+            }
+        }, retryDelay);
+    })
+    .finally(() => {
+        showProgress(false);
+    });
+}
+
+// Modify executeCommand function to use Socket.IO when available
+function executeCommand(command, retryCount = 0, isRetry = false) {
+    if (!command.trim()) return;
+    
+    // Add to command history (only if not a retry)
+    if (!isRetry && (commandHistory.length === 0 || commandHistory[commandHistory.length - 1] !== command)) {
+        commandHistory.push(command);
+        saveCommandHistory();
+    }
+    historyPosition = -1;
+    
+    // Check for built-in commands
+    if (handleBuiltInCommands(command)) {
+        return;
+    }
+    
+    // Only display the command if this is not a retry attempt
+    if (!isRetry) {
+        addTerminalText(command, 'command');
+    }
+    
+    // Set executing state
+    isExecuting = true;
+    setStatus('executing');
+    showProgress(true);
+    
+    // Check if we have a valid session
+    if (!currentSession.id) {
+        addTerminalText('No active session. Creating new session...', 'system');
+        createNewSession();
+        return;
+    }
+    
+    // Use WebSockets if available
+    if (isWebSocketMode && socket && socket.connected) {
+        // Send command to server via Socket.IO
+        socket.emit('execute_command', {
+            command: command,
+            session_id: currentSession.id
+        });
+        return;
+    }
+    
+    // Fall back to HTTP mode
+    httpExecuteCommand(command, retryCount, isRetry);
+}
+
+// Original HTTP implementation of executeCommand
+function httpExecuteCommand(command, retryCount = 0, isRetry = false) {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 1000; // 1 second delay between retries
+    
+    // Add a timeout to detect hanging commands
+    const timeout = setTimeout(() => {
+        // Not aborting the fetch, but providing visual feedback
+        if (isExecuting) {
+            addTerminalText('Command is taking longer than expected...', 'warning');
+        }
+    }, 10000); // 10 seconds timeout
+    
+    // Execute the command via API
+    fetch(`${API_BASE_URL}/execute-command`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Id': currentSession.id
+        },
+        body: JSON.stringify({ command })
+    })
+    .then(response => {
+        // Clear the timeout
+        clearTimeout(timeout);
+        
+        if (!response.ok) {
+            // Handle specific error cases
+            if (response.status === 401) {
+                // Session expired - create new session and retry
+                addTerminalText('Session expired. Creating new session and retrying...', 'system');
+                createNewSession();
+                
+                if (retryCount < MAX_RETRIES) {
+                    setTimeout(() => {
+                        executeCommand(command, retryCount + 1, true);
+                    }, RETRY_DELAY);
+                    return Promise.reject('Session expired - retrying');
+                } else {
+                    throw new Error('Session expired and max retries reached');
+                }
+            } else if (response.status === 500 || response.status === 502 || response.status === 503 || response.status === 504) {
+                // Server errors - retry
+                if (retryCount < MAX_RETRIES) {
+                    addTerminalText(`Server error (${response.status}). Retrying command in ${RETRY_DELAY/1000} second${RETRY_DELAY/1000 !== 1 ? 's' : ''}...`, 'system');
+                    setTimeout(() => {
+                        executeCommand(command, retryCount + 1, true);
+                    }, RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+                    return Promise.reject('Server error - retrying');
+                } else {
+                    throw new Error(`Server error ${response.status} after ${MAX_RETRIES} retries`);
+                }
+            }
+            
+            throw new Error(`HTTP error ${response.status}`);
+        }
+        
+        return response.json();
+    })
+    .then(data => {
+        // Update session last activity
+        currentSession.lastActivity = new Date();
+        currentSession.reconnectAttempts = 0;
+        updateSessionInfo();
+        
+        // Check if session was renewed
+        if (data.sessionRenewed && data.newSessionId) {
+            addTerminalText(`Session renewed with ID: ${data.newSessionId.substring(0, 8)}...`, 'system');
+            currentSession.id = data.newSessionId;
+            currentSession.created = new Date();
+            updateSessionInfo();
+        }
+        
+        // Display the result
+        if (data.error) {
+            // Check if this is a recoverable error
+            if (data.error.includes('invalid') || data.error.includes('expired') || data.error.includes('failed')) {
+                if (retryCount < MAX_RETRIES) {
+                    addTerminalText(`Command error: ${data.error}. Retrying...`, 'warning');
+                    setTimeout(() => {
+                        executeCommand(command, retryCount + 1, true);
+                    }, RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+                    return;
+                } else {
+                    addTerminalText(`Command failed after ${MAX_RETRIES} attempts: ${data.error}`, 'error');
+                    addTerminalText('Try executing the command again manually', 'system');
+                }
+            } else {
+                // Normal command error (not a system error)
+                addTerminalText(data.error, 'error');
+            }
+        } else {
+            // Check if we need to update our working directory after a pwd command
+            if (command.trim() === 'pwd') {
+                try {
+                    // Update working directory based on pwd output
+                    let pwd = data.output.trim();
+                    if (pwd) {
+                        currentWorkingDirectory = pwd;
+                        updatePrompt();
+                    }
+                } catch (e) {
+                    console.error('Error updating working directory:', e);
+                }
+            }
+            
+            // Show the output with proper formatting
+            addTerminalText(data.output || '(Command executed with no output)', 'output');
+        }
+        
+        setStatus('connected');
+    })
+    .catch(error => {
+        // If already handled above through Promise.reject, don't process further
+        if (error === 'Session expired - retrying' || error === 'Server error - retrying') {
+            return;
+        }
+        
+        setStatus('error');
+        
+        // Check if we should retry
+        if (retryCount < MAX_RETRIES && 
+            (error.message.includes('HTTP error') || 
+             error.message.includes('network') || 
+             error.message.includes('timeout'))) {
+            
+            addTerminalText(`Error: ${error.message}. Retrying (${retryCount + 1}/${MAX_RETRIES})...`, 'warning');
+            console.error(`Command execution error (retry ${retryCount + 1}):`, error);
+            
+            // Wait before retrying with exponential backoff
+            setTimeout(() => {
+                executeCommand(command, retryCount + 1, true);
+            }, RETRY_DELAY * Math.pow(2, retryCount));
+            return;
+        }
+        
+        // Max retries reached or non-retryable error
+        addTerminalText(`Error executing command: ${error.message}`, 'error');
+        console.error('Command execution error:', error);
+        
+        // If we've lost connection, attempt to reconnect
+        if (error.message.includes('HTTP error 401')) {
+            addTerminalText('Session expired or invalid. Creating new session...', 'system');
+            createNewSession();
+        }
+    })
+    .finally(() => {
+        // Only set as not executing if we're not retrying
+        if (!isRetry || retryCount >= MAX_RETRIES) {
+            isExecuting = false;
+            showProgress(false);
+        }
+    });
+}
+
+// Modify endSession function to use Socket.IO when available
+function endSession() {
+    if (!currentSession.id) {
+        addTerminalText('No active session to terminate.', 'system');
+        return;
+    }
+    
+    setStatus('connecting');
+    showProgress(true);
+    
+    // Use WebSockets if available
+    if (isWebSocketMode && socket && socket.connected) {
+        // Send session termination request via Socket.IO
+        socket.emit('end_session', {
+            session_id: currentSession.id
+        });
+        
+        // Clear session info locally
+        currentSession = {
+            id: null,
+            created: null,
+            lastActivity: null,
+            expiresIn: null,
+            reconnectAttempts: 0
+        };
+        
+        updateSessionInfo();
+        setStatus('disconnected');
+        showProgress(false);
+        
+        addTerminalText('Session terminated.', 'system');
+        addTerminalText('Create a new session to continue.', 'system');
+        return;
+    }
+    
+    // Fall back to HTTP mode
+    httpEndSession();
+}
+
+// Original HTTP implementation of endSession
+function httpEndSession() {
+    fetch(`${API_BASE_URL}/session`, {
+        method: 'DELETE',
+        headers: {
+            'X-Session-Id': currentSession.id
+        }
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error ${response.status}`);
+        }
+        
+        // Clear session info
+        currentSession = {
+            id: null,
+            created: null,
+            lastActivity: null,
+            expiresIn: null,
+            reconnectAttempts: 0
+        };
+        
+        updateSessionInfo();
+        setStatus('disconnected');
+        addTerminalText('Session terminated.', 'system');
+        addTerminalText('Create a new session to continue.', 'system');
+    })
+    .catch(error => {
+        setStatus('error');
+        addTerminalText(`Error terminating session: ${error.message}`, 'error');
+        console.error('Session termination error:', error);
+    })
+    .finally(() => {
+        showProgress(false);
+    });
+}
+
+// Modify addTerminalText to handle WebSocket streaming output
+function addTerminalText(text, type = 'output') {
+    const entryDiv = document.createElement('div');
+    entryDiv.className = `command-entry ${type}`;
+    
+    if (type === 'command') {
+        const promptSpan = document.createElement('span');
+        promptSpan.className = 'prompt-span';
+        promptSpan.textContent = `${currentWorkingDirectory} $ `;
+        
+        const commandSpan = document.createElement('span');
+        commandSpan.className = 'command-text';
+        commandSpan.textContent = text;
+        
+        entryDiv.appendChild(promptSpan);
+        entryDiv.appendChild(commandSpan);
+    } else if (type === 'output-stream') {
+        // For streaming output, append to the last output element if it exists
+        const lastEntry = terminalOutput.lastElementChild;
+        if (lastEntry && lastEntry.classList.contains('output-stream')) {
+            lastEntry.textContent += text;
+            
+            // Scroll to bottom
+            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+            return;
+        }
+        
+        // Otherwise create a new output element
+        entryDiv.textContent = text;
+    } else {
+        // Special handling for different output types
+        entryDiv.innerHTML = text;
+    }
+    
+    terminalOutput.appendChild(entryDiv);
+    
+    // Scroll to bottom
+    terminalOutput.scrollTop = terminalOutput.scrollHeight;
+}
