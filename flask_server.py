@@ -20,6 +20,7 @@ import select
 import io
 import eventlet
 from file_management import register_file_management_endpoints
+from session_enhancements import enhance_session_management
 
 # Initialize cache before anything else
 # In-memory cache for responses
@@ -483,15 +484,12 @@ def handle_execute_command(data):
                 else:
                     print(f"Source openssl-wrapper not found at {source_wrapper}")
                     socketio.emit('command_output', {
-                        'output': "Warning: OpenSSL wrapper script not found. Using direct OpenSSL command.
-"
+                        'output': "Warning: OpenSSL wrapper script not found. Using direct OpenSSL command."
                     }, to=request.sid)
             except Exception as e:
                 print(f"Failed to copy openssl-wrapper: {str(e)}")
                 socketio.emit('command_output', {
-                    'output': f"Warning: Could not set up OpenSSL wrapper: {str(e)}
-Will try to use direct command.
-"
+                    'output': f"Warning: Could not set up OpenSSL wrapper: {str(e)}\nWill try to use direct command."
                 }, to=request.sid)
 
         # Now check if the wrapper exists and use it if possible
@@ -507,8 +505,7 @@ Will try to use direct command.
             # Fallback to direct execution with preset passphrase for OpenSSL
             print(f"Using direct openssl command (wrapper not available at {openssl_wrapper})")
             socketio.emit('command_output', {
-                'output': "Notice: Using direct OpenSSL command without wrapper.
-"
+                'output': "Notice: Using direct OpenSSL command without wrapper."
             }, to=request.sid)
     
     # Add environment variables to help user-level installations
@@ -812,6 +809,11 @@ except Exception as e:
 sessions = {}
 running_processes = {}  # Stores active subprocesses by session_id
 session_lock = threading.Lock()
+
+# Initialize session pool for pre-creating sessions
+session_pool = []
+session_pool_lock = threading.Lock()
+pool_initialization_in_progress = False
 
 
 def log_activity(log_type, data):
@@ -2144,8 +2146,14 @@ def health_check():
 
 
 # Register file management endpoints with Flask app
+# Enhanced session management for improved persistence between terminal and file operations
+enhanced_get_session = enhance_session_management(app, socketio, sessions, session_lock, socket_sessions)
+
+# Replace the default get_session with our enhanced version
+app.config['get_session'] = enhanced_get_session
+
 # Moved here after get_session is defined to avoid NameError
-register_file_management_endpoints(app, get_session)
+register_file_management_endpoints(app, enhanced_get_session)
 
 # Serve the file browser interface
 @app.route('/files-browser')
