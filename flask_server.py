@@ -74,8 +74,7 @@ eventlet.monkey_patch()
 print("WebSocket support enabled with eventlet")
 print(f"Current eventlet version: {eventlet.__version__}")
 
-# Register file management API endpoints
-register_file_management_endpoints(app, get_session)
+# Note: We'll register file management endpoints after get_session is defined
 
 # WebSocket event handlers
 @socketio.on('connect')
@@ -2105,6 +2104,7 @@ def health_check():
 
 
 # Register file management endpoints with Flask app
+# Moved here after get_session is defined to avoid NameError
 register_file_management_endpoints(app, get_session)
 
 # Serve the file browser interface
