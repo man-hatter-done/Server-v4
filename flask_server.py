@@ -1002,8 +1002,48 @@ def execute_command():
                 })
     
     session = get_session(session_id)
+    
+    # If the session is invalid or expired, create a new one instead of returning an error
     if not session:
-        return jsonify({'error': 'Invalid or expired session'}), 401
+        # Create a new session for this user/device
+        print(f"Session {session_id} invalid or expired, creating a new session")
+        
+        # Use client IP or device ID as a fallback user ID
+        user_id = request.headers.get('X-Device-Id', request.remote_addr)
+        client_ip = request.remote_addr
+        
+        # Create a new session
+        new_session_id = str(uuid.uuid4())
+        home_dir = os.path.join('user_data', new_session_id)
+        
+        # Set up the user environment with necessary files
+        setup_user_environment(home_dir)
+        
+        with session_lock:
+            sessions[new_session_id] = {
+                'user_id': user_id,
+                'client_ip': client_ip,
+                'created': time.time(),
+                'last_accessed': time.time(),
+                'home_dir': home_dir
+            }
+        
+        log_activity('session', {
+            'action': 'auto_renewed',
+            'old_session_id': session_id,
+            'new_session_id': new_session_id,
+            'user_id': user_id,
+            'client_ip': client_ip
+        })
+        
+        # Use the new session
+        session_id = new_session_id
+        session = sessions[session_id]
+        
+        # Return both the command result and the new session info
+        auto_renewed = True
+    else:
+        auto_renewed = False
         
     data = request.json or {}
     command = data.get('command')
@@ -1092,19 +1132,67 @@ def execute_command():
                 'output': 'Session keep-alive script not found. Your session may time out after inactivity.'
             })
     
+    # Verify the user directory exists for all commands - create it if it doesn't
+    if not os.path.isdir(session['home_dir']):
+        try:
+            os.makedirs(session['home_dir'], exist_ok=True)
+            print(f"Created missing user directory: {session['home_dir']}")
+            # Since we had to create the directory, we should set up the environment
+            setup_user_environment(session['home_dir'])
+        except Exception as e:
+            print(f"Error creating user directory: {str(e)}")
+            return jsonify({'error': f"Could not access user directory: {str(e)}"}), 500
+
+    # Handle terminal-based editors (nano, vim, emacs, etc.)
+    terminal_editors = ['nano', 'vim', 'vi', 'emacs', 'pico', 'joe', 'ed']
+    for editor in terminal_editors:
+        if command.strip().startswith(f"{editor} "):
+            # Extract filename from command
+            parts = command.strip().split()
+            if len(parts) > 1:
+                filename = parts[1]
+                # Check if file exists, create it if it doesn't
+                filepath = os.path.join(session['home_dir'], filename)
+                try:
+                    # Create parent directories if they don't exist
+                    os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+                    
+                    # Create the file if it doesn't exist
+                    if not os.path.exists(filepath):
+                        with open(filepath, 'w') as f:
+                            f.write('')
+                            
+                    # Return a message explaining that web-based editors aren't supported
+                    return jsonify({
+                        'output': f"Terminal-based editors like {editor} aren't fully supported in the web terminal.\n\n"
+                                 f"The file '{filename}' has been created. You can use these alternatives:\n"
+                                 f"1. Use 'cat > {filename}' to create/edit the file (Ctrl+D to save)\n"
+                                 f"2. Use 'echo \"content\" > {filename}' to write to the file\n"
+                                 f"3. Use 'cat {filename}' to view the file contents"
+                    })
+                except Exception as e:
+                    return jsonify({'error': f"Failed to create file: {str(e)}"}), 500
+            else:
+                return jsonify({
+                    'output': f"Terminal-based editors like {editor} aren't fully supported in the web terminal.\n"
+                             f"Please specify a filename, e.g., {editor} filename.txt"
+                })
+
+    # Handle Python code execution (if it looks like Python code)
+    python_patterns = ['print(', 'def ', 'import ', 'for ', 'while ', 'if ', 'class ', 'from ']
+    is_python_code = False
+    for pattern in python_patterns:
+        if command.strip().startswith(pattern):
+            is_python_code = True
+            break
+    
+    if is_python_code:
+        # Wrap the command in python -c
+        python_cmd = command.replace('"', '\\"')  # Escape double quotes
+        command = f'python3 -c "{python_cmd}"'
+    
     # Special handling for OpenSSL commands - use our wrapper if available
     if command.strip().startswith('openssl '):
-        # First, verify the user directory exists - create it if it doesn't
-        if not os.path.isdir(session['home_dir']):
-            try:
-                os.makedirs(session['home_dir'], exist_ok=True)
-                print(f"Created missing user directory: {session['home_dir']}")
-                # Since we had to create the directory, we should set up the environment
-                setup_user_environment(session['home_dir'])
-            except Exception as e:
-                print(f"Error creating user directory: {str(e)}")
-                return jsonify({'error': f"Could not access user directory: {str(e)}"}), 500
-
         # Check local user openssl-wrapper
         openssl_wrapper = os.path.join(session['home_dir'], '.local', 'bin', 'openssl-wrapper')
         
@@ -1326,29 +1414,66 @@ def execute_command():
                 else:
                     combined = error_message
                     
-                return jsonify({
+                # Prepare error response data
+                error_response = {
                     'error': combined,
                     'exitCode': process.returncode
-                }), 400
+                }
+                
+                # If session was auto-renewed, include the new session ID in the error response
+                if auto_renewed:
+                    error_response['sessionRenewed'] = True
+                    error_response['newSessionId'] = session_id
+                    error_response['error'] = f"[Session renewed with ID: {session_id[:8]}...]\n{combined}"
+                
+                return jsonify(error_response), 400
             
             # Add response time for performance monitoring
             cmd_time = time.time() - cmd_start_time
-            response = jsonify({'output': stdout})
+            
+            # Prepare response data
+            response_data = {'output': stdout}
+            
+            # If session was auto-renewed, include the new session ID in the response
+            if auto_renewed:
+                response_data['sessionRenewed'] = True
+                response_data['newSessionId'] = session_id
+                response_data['output'] = f"[Session renewed with ID: {session_id[:8]}...]\n{stdout}"
+            
+            response = jsonify(response_data)
             response.headers['X-Command-Time'] = f"{cmd_time:.4f}s"
             return response
             
         except subprocess.TimeoutExpired:
             # Keep process running but return timeout message
-            return jsonify({
+            timeout_response = {
                 'error': f'Command exceeded {COMMAND_TIMEOUT} second timeout limit. ' + 
                          'It continues running in the background. ' +
                          'Check results later or start a new command.'
-            }), 408
+            }
+            
+            # If session was auto-renewed, include the new session ID in the timeout response
+            if auto_renewed:
+                timeout_response['sessionRenewed'] = True
+                timeout_response['newSessionId'] = session_id
+                timeout_response['error'] = f"[Session renewed with ID: {session_id[:8]}...]\n{timeout_response['error']}"
+            
+            return jsonify(timeout_response), 408
         
     except Exception as e:
         # Cleanup any processes on error
         terminate_process(session_id)
-        return jsonify({'error': f'Failed to execute command: {str(e)}'}), 500
+        
+        # Prepare the error response
+        error_response = {'error': f'Failed to execute command: {str(e)}'}
+        
+        # If session was auto-renewed, include the new session ID in the error response
+        if auto_renewed:
+            error_response['sessionRenewed'] = True
+            error_response['newSessionId'] = session_id
+            error_response['error'] = f"[Session renewed with ID: {session_id[:8]}...]\n{error_response['error']}"
+        
+        return jsonify(error_response), 500
 
 
 @app.route('/session', methods=['GET'])
