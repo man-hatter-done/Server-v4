@@ -2,6 +2,7 @@ import os
 import uuid
 import time
 import json
+import sys
 import shutil
 import signal
 import subprocess
@@ -25,6 +26,19 @@ app.config['COMPRESS_LEVEL'] = 6  # Medium compression level - good balance betw
 app.config['COMPRESS_MIN_SIZE'] = 500  # Only compress responses larger than 500 bytes
 app.config['START_TIME'] = time.time()  # Track app startup time for uptime reporting
 app.config['SERVER_VERSION'] = 'flask-2.0.0'  # Server version for consistent reporting
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # Limit request size to 16MB
+app.config['PROPAGATE_EXCEPTIONS'] = True  # Make sure exceptions are properly propagated
+
+# Add initialization logging to help diagnose worker issues
+print(f"Flask app initialization starting at {time.time()}")
+print(f"Python version: {sys.version}")
+print(f"System platform: {sys.platform}")
+try:
+    import psutil
+    mem = psutil.virtual_memory()
+    print(f"Available memory: {mem.available / (1024*1024):.1f}MB / {mem.total / (1024*1024):.1f}MB")
+except ImportError:
+    print("psutil not available - skipping memory check")
 
 # Initialize Flask-Compress for response compression
 compress = Compress()
@@ -134,62 +148,88 @@ def monitor_memory_usage():
     WARNING_THRESHOLD = 70  # Percent
     CRITICAL_THRESHOLD = 85  # Percent
     EMERGENCY_THRESHOLD = 95  # Percent
-    CHECK_INTERVAL = 30  # Seconds
+    CHECK_INTERVAL = 15  # Seconds - reduced interval for faster response
     
-    logging.info("Memory monitor started")
+    # Track worker process ID for logging
+    worker_pid = os.getpid()
+    
+    logging.info(f"Memory monitor started for worker {worker_pid}")
+    print(f"Memory monitor starting for worker {worker_pid}")
+    
+    # Record startup memory usage as baseline
+    try:
+        process = psutil.Process(worker_pid)
+        startup_mem = process.memory_info().rss / (1024 * 1024)
+        logging.info(f"Initial memory usage: {startup_mem:.1f} MB")
+        print(f"Initial memory usage: {startup_mem:.1f} MB")
+    except Exception as e:
+        logging.error(f"Error getting baseline memory: {str(e)}")
     
     while True:
         try:
             # Get current memory usage
-            process = psutil.Process(os.getpid())
+            process = psutil.Process(worker_pid)
             mem_info = process.memory_info()
             mem_percent = process.memory_percent()
+            mem_mb = mem_info.rss / (1024 * 1024)
             
-            # Log current status periodically
+            # Always log status for debugging worker failures
+            logging.info(f"Memory usage: {mem_percent:.1f}% ({mem_mb:.1f} MB)")
+            
+            # Warning level - run garbage collection
             if mem_percent > WARNING_THRESHOLD:
-                logging.warning(f"Memory usage: {mem_percent:.1f}% ({mem_info.rss / (1024 * 1024):.1f} MB)")
+                logging.warning(f"Worker {worker_pid} high memory usage: {mem_percent:.1f}% ({mem_mb:.1f} MB)")
+                logging.info("Running garbage collection")
+                gc.collect()
                 
-                # Warning level - run garbage collection
-                if mem_percent > WARNING_THRESHOLD:
-                    logging.info("Running garbage collection")
-                    gc.collect()
+                # Log memory after GC
+                gc_mem = psutil.Process(worker_pid).memory_info().rss / (1024 * 1024)
+                logging.info(f"Memory after GC: {gc_mem:.1f} MB (saved {mem_mb - gc_mem:.1f} MB)")
+            
+            # Critical level - release caches
+            if mem_percent > CRITICAL_THRESHOLD:
+                logging.warning(f"Worker {worker_pid} critical memory usage - releasing caches")
+                # Clear file content cache
+                file_content_cache.cache_clear()
+                # Clear response cache
+                response_cache.clear()
+                # Reset script cache
+                script_cache.clear()
+                # Force garbage collection
+                gc.collect()
                 
-                # Critical level - release caches
-                if mem_percent > CRITICAL_THRESHOLD:
-                    logging.warning("Critical memory usage - releasing caches")
-                    # Clear file content cache
-                    file_content_cache.cache_clear()
-                    # Clear response cache
-                    response_cache.clear()
-                    # Reset script cache
-                    script_cache.clear()
-                    # Force garbage collection
-                    gc.collect()
-                
-                # Emergency level - take drastic action
-                if mem_percent > EMERGENCY_THRESHOLD:
-                    logging.error("Emergency memory usage - removing expired sessions")
-                    # Remove expired sessions
-                    with session_lock:
-                        current_time = time.time()
-                        expired_sessions = []
-                        
-                        # Find expired or old sessions
-                        for session_id, session in sessions.items():
-                            if current_time - session['last_accessed'] > SESSION_TIMEOUT / 2:
-                                expired_sessions.append(session_id)
-                        
-                        # Remove expired sessions
-                        for session_id in expired_sessions:
-                            terminate_process(session_id)
-                            del sessions[session_id]
-                            logging.info(f"Removed session {session_id} to save memory")
+                # Log memory after cache clearing
+                cache_clear_mem = psutil.Process(worker_pid).memory_info().rss / (1024 * 1024)
+                logging.info(f"Memory after cache clearing: {cache_clear_mem:.1f} MB (saved {mem_mb - cache_clear_mem:.1f} MB)")
+            
+            # Emergency level - take drastic action
+            if mem_percent > EMERGENCY_THRESHOLD:
+                logging.error(f"Worker {worker_pid} emergency memory usage - removing expired sessions")
+                # Remove expired sessions
+                with session_lock:
+                    current_time = time.time()
+                    expired_sessions = []
                     
-                    # Force garbage collection again
-                    gc.collect()
+                    # Find expired or old sessions
+                    for session_id, session in sessions.items():
+                        if current_time - session['last_accessed'] > SESSION_TIMEOUT / 2:
+                            expired_sessions.append(session_id)
+                    
+                    # Remove expired sessions
+                    for session_id in expired_sessions:
+                        terminate_process(session_id)
+                        del sessions[session_id]
+                        logging.info(f"Removed session {session_id} to save memory")
+                
+                # Force garbage collection again
+                gc.collect()
+                
+                # Final memory check
+                final_mem = psutil.Process(worker_pid).memory_info().rss / (1024 * 1024)
+                logging.info(f"Memory after emergency actions: {final_mem:.1f} MB (saved {mem_mb - final_mem:.1f} MB)")
         
         except Exception as e:
-            logging.error(f"Memory monitor error: {str(e)}")
+            logging.error(f"Memory monitor error in worker {worker_pid}: {str(e)}")
         
         # Sleep before next check
         time.sleep(CHECK_INTERVAL)
@@ -197,10 +237,18 @@ def monitor_memory_usage():
 # Start memory monitor in background thread
 try:
     import psutil
+    # Print memory info before starting monitor to help diagnose worker failures
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    print(f"Worker {os.getpid()} starting with {mem_info.rss / (1024 * 1024):.1f} MB memory usage")
+    
     memory_monitor_thread = threading.Thread(target=monitor_memory_usage, daemon=True)
     memory_monitor_thread.start()
 except ImportError:
     print("Warning: psutil not installed. Memory monitoring disabled.")
+except Exception as e:
+    print(f"Failed to start memory monitor: {str(e)}")
+    # Continue without memory monitoring
 
 # Session storage
 sessions = {}

@@ -218,9 +218,17 @@
             }
         }
 
-        // Execute command
-        async function executeCommand() {
-            const command = commandInput.value.trim();
+        // Execute command with retry capability
+        async function executeCommand(command = null, retryCount = 0) {
+            // Get command from input if not provided
+            if (command === null) {
+                command = commandInput.value.trim();
+                // Clear the input on first attempt
+                if (retryCount === 0) {
+                    commandInput.value = '';
+                }
+            }
+            
             if (!command) return;
             
             if (!sessionId) {
@@ -228,13 +236,26 @@
                 return;
             }
             
+            // Constants for retry logic
+            const MAX_RETRIES = 3;
+            const RETRY_DELAY = 1000; // ms
+            
             try {
                 setLoading(true);
                 setExecuteEnabled(false);
                 isExecuting = true;
                 
-                // Display the command
-                addOutput('$ ' + command, 'command-text');
+                // Only display the command on first try
+                if (retryCount === 0) {
+                    addOutput('$ ' + command, 'command-text');
+                }
+                
+                // Add timeout detection for long-running commands
+                const timeoutId = setTimeout(() => {
+                    if (isExecuting) {
+                        addOutput('Command is taking longer than expected...', 'system-text');
+                    }
+                }, 8000);
                 
                 const response = await fetch('/execute-command', {
                     method: 'POST',
@@ -245,21 +266,81 @@
                     body: JSON.stringify({ command })
                 });
                 
-                // Clear the input
-                commandInput.value = '';
+                clearTimeout(timeoutId);
+                
+                // Handle session expiration and server errors with retry
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        // Session expired - attempt to create a new one
+                        sessionId = null;
+                        addOutput('Session expired. Creating new session...', 'system-text');
+                        statusEl.textContent = 'Reconnecting...';
+                        
+                        await createSession();
+                        
+                        // Only retry if we have a valid session now
+                        if (sessionId && retryCount < MAX_RETRIES) {
+                            addOutput(`Retrying command (attempt ${retryCount + 1}/${MAX_RETRIES})...`, 'system-text');
+                            // Slight delay before retry
+                            setTimeout(() => {
+                                executeCommand(command, retryCount + 1);
+                            }, RETRY_DELAY);
+                            return;
+                        } else {
+                            throw new Error('Session expired and could not reconnect');
+                        }
+                    } else if (response.status >= 500 && retryCount < MAX_RETRIES) {
+                        // Server error - retry with backoff
+                        addOutput(`Server error (${response.status}). Retrying...`, 'system-text');
+                        setTimeout(() => {
+                            executeCommand(command, retryCount + 1);
+                        }, RETRY_DELAY * Math.pow(2, retryCount));
+                        return;
+                    }
+                    
+                    throw new Error(`HTTP error ${response.status}`);
+                }
                 
                 const data = await response.json();
                 
                 if (data.error) {
+                    // Check if this is a system error that we can retry
+                    if ((data.error.includes('invalid') || 
+                         data.error.includes('expired') || 
+                         data.error.includes('failed')) && 
+                        retryCount < MAX_RETRIES) {
+                        
+                        addOutput(`Command error: ${data.error}. Retrying...`, 'system-text');
+                        setTimeout(() => {
+                            executeCommand(command, retryCount + 1);
+                        }, RETRY_DELAY * (retryCount + 1));
+                        return;
+                    }
+                    
+                    // Regular command error or max retries reached
                     addOutput(data.error, 'error-text');
+                    
+                    // For max retries, give additional feedback
+                    if (retryCount === MAX_RETRIES) {
+                        addOutput('Command failed after multiple attempts. Please try again.', 'system-text');
+                    }
                 } else {
                     addOutput(data.output || '(Command executed with no output)');
                 }
                 
             } catch (error) {
+                // Network or unexpected errors
+                if (retryCount < MAX_RETRIES) {
+                    addOutput(`Error: ${error.message}. Retrying...`, 'system-text');
+                    setTimeout(() => {
+                        executeCommand(command, retryCount + 1);
+                    }, RETRY_DELAY * Math.pow(2, retryCount)); // Exponential backoff
+                    return;
+                }
+                
                 addOutput('Error executing command: ' + error.message, 'error-text');
                 
-                if (error.message.includes('401')) {
+                if (error.message.includes('401') || error.message.includes('expired')) {
                     sessionId = null;
                     addOutput('Session expired. Please create a new session.', 'system-text');
                     statusEl.textContent = 'Disconnected. Session expired.';
@@ -268,10 +349,12 @@
                 
                 console.error('Command execution error:', error);
             } finally {
-                setLoading(false);
-                setExecuteEnabled(true);
-                isExecuting = false;
-                commandInput.focus();
+                if (retryCount === MAX_RETRIES || !isExecuting) {
+                    setLoading(false);
+                    setExecuteEnabled(true);
+                    isExecuting = false;
+                    commandInput.focus();
+                }
             }
         }
 
