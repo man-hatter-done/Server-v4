@@ -2,6 +2,72 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
+# Install system dependencies and development tools
+# These are needed for building Python packages with native extensions
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    wget \
+    git \
+    zip \
+    unzip \
+    vim \
+    nano \
+    htop \
+    procps \
+    sudo \
+    openssh-client \
+    tmux \
+    gcc \
+    g++ \
+    make \
+    libssl-dev \
+    libffi-dev \
+    python3-dev \
+    sqlite3 \
+    libsqlite3-dev \
+    nodejs \
+    npm \
+    ruby \
+    ruby-dev \
+    pkg-config \
+    net-tools \
+    iproute2 \
+    netcat-openbsd \
+    man-db \
+    locales \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up locales
+RUN locale-gen en_US.UTF-8
+ENV LANG en_US.UTF-8
+ENV LANGUAGE en_US:en
+ENV LC_ALL en_US.UTF-8
+
+# Install common Python packages globally
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+RUN pip install --no-cache-dir \
+    requests \
+    numpy \
+    pandas \
+    matplotlib \
+    flask \
+    django \
+    gunicorn \
+    pytest \
+    pylint \
+    black \
+    ipython \
+    jupyter \
+    scikit-learn \
+    beautifulsoup4 \
+    lxml \
+    cryptography \
+    PyJWT \
+    SQLAlchemy \
+    pyyaml
+
 # Copy requirements first for better caching
 COPY requirements.txt .
 
@@ -12,8 +78,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY flask_server.py .
 COPY static/ ./static/
 
-# Create directories
-RUN mkdir -p logs user_data
+# Create directories and add user scripts
+COPY user_scripts/ ./user_scripts/
+RUN mkdir -p logs user_data && \
+    chmod +x user_scripts/*.sh
+
+# Set up permissions for user data directory
+RUN chown -R www-data:www-data user_data logs
 
 # Expose the port
 EXPOSE 3000

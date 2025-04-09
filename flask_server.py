@@ -2,8 +2,11 @@ import os
 import uuid
 import time
 import json
+import shutil
+import signal
 import subprocess
 import threading
+import atexit
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, send_file, render_template
 from flask_cors import CORS
@@ -18,6 +21,8 @@ PORT = int(os.environ.get('PORT', 3000))
 SESSION_TIMEOUT = int(os.environ.get('SESSION_TIMEOUT', 3600))  # 1 hour in seconds
 USE_AUTH = os.environ.get('USE_AUTH', 'False').lower() == 'true'
 API_KEY = os.environ.get('API_KEY', 'change-this-in-production')
+COMMAND_TIMEOUT = int(os.environ.get('COMMAND_TIMEOUT', 300))  # 5 minutes in seconds
+ENABLE_SYSTEM_COMMANDS = os.environ.get('ENABLE_SYSTEM_COMMANDS', 'True').lower() == 'true'
 
 # Create required directories
 os.makedirs('logs', exist_ok=True)
@@ -25,6 +30,7 @@ os.makedirs('user_data', exist_ok=True)
 
 # Session storage
 sessions = {}
+running_processes = {}  # Stores active subprocesses by session_id
 session_lock = threading.Lock()
 
 
@@ -41,6 +47,133 @@ def log_activity(log_type, data):
         f.write(json.dumps(log_entry) + '\n')
 
 
+def setup_user_environment(home_dir):
+    """Set up a user environment with necessary files and directories"""
+    os.makedirs(home_dir, exist_ok=True)
+    
+    # Create Python virtual environment if it doesn't exist
+    venv_dir = os.path.join(home_dir, 'venv')
+    if not os.path.exists(venv_dir):
+        try:
+            subprocess.run(['python3', '-m', 'venv', venv_dir], check=True)
+        except subprocess.CalledProcessError:
+            # Fallback if venv creation fails
+            pass
+    
+    # Set up a .bashrc file with helpful configurations
+    bashrc_path = os.path.join(home_dir, '.bashrc')
+    if not os.path.exists(bashrc_path):
+        with open(bashrc_path, 'w') as f:
+            f.write("""
+# Auto-activate Python virtual environment
+if [ -d "$HOME/venv" ] ; then
+    source "$HOME/venv/bin/activate"
+fi
+
+# Set up environment variables
+export PATH="$HOME/.local/bin:$PATH"
+export PYTHONUSERBASE="$HOME/.local"
+
+# Set prompt
+export PS1="\\[\\033[01;32m\\]\\u@terminal\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ "
+
+# Aliases
+alias ll='ls -la'
+alias python=python3
+
+# Helper functions
+pip-user() {
+    pip install --user "$@"
+}
+
+apt-get() {
+    echo "System apt-get is disabled. Use pip-user for Python packages."
+    echo "Example: pip-user numpy pandas requests"
+    return 1
+}
+
+apt() {
+    echo "System apt is disabled. Use pip-user for Python packages."
+    echo "Example: pip-user numpy pandas requests"
+    return 1
+}
+
+# Display welcome message on login
+echo "iOS Terminal - Type 'help' for available commands"
+echo "For package installation, use: pip-user PACKAGE_NAME"
+""")
+    
+    # Create additional useful directories
+    os.makedirs(os.path.join(home_dir, 'projects'), exist_ok=True)
+    os.makedirs(os.path.join(home_dir, 'downloads'), exist_ok=True)
+    os.makedirs(os.path.join(home_dir, '.local', 'bin'), exist_ok=True)
+    
+    # Create a custom help file
+    help_path = os.path.join(home_dir, 'help.txt')
+    if not os.path.exists(help_path):
+        with open(help_path, 'w') as f:
+            f.write("""iOS Terminal Help
+===============
+
+Package Installation
+-------------------
+- Install Python packages:  pip-user PACKAGE_NAME
+- Update pip:              pip-user --upgrade pip
+- Install NodeJS packages: npm install -g PACKAGE_NAME
+- Install Ruby gems:       gem install --user-install PACKAGE_NAME
+
+Command Examples
+---------------
+- File management:         ls, cp, mv, rm, mkdir, cat, nano, vim
+- Network tools:           curl, wget, netstat, ping
+- Process management:      ps, kill, top
+- Python development:      python, pip-user
+- Web development:         node, npm
+- Version control:         git clone, git pull, git push
+
+Special Commands
+---------------
+- help                     Display this help message
+- install-python           Set up Python environment
+- install-node             Set up NodeJS environment
+
+Tips
+----
+- Your files are preserved between sessions
+- Python packages are installed in your user space
+- Use .local/bin for your custom executables
+- The virtual environment is auto-activated
+- Long-running commands will continue in background
+""")
+    
+    # Copy helper scripts to user's bin directory
+    user_bin_dir = os.path.join(home_dir, '.local', 'bin')
+    scripts_dir = 'user_scripts'
+    
+    if os.path.exists(scripts_dir):
+        for script in ['install-python-pip.sh', 'install-node-npm.sh']:
+            script_path = os.path.join(scripts_dir, script)
+            if os.path.exists(script_path):
+                # Copy and make executable
+                dest_path = os.path.join(user_bin_dir, script.replace('.sh', ''))
+                shutil.copy2(script_path, dest_path)
+                os.chmod(dest_path, 0o755)
+
+
+def terminate_process(session_id):
+    """Terminate any running process for a session"""
+    if session_id in running_processes:
+        process_info = running_processes[session_id]
+        try:
+            # Try to terminate the process group
+            os.killpg(os.getpgid(process_info['process'].pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass  # Process already terminated
+        finally:
+            if session_id in running_processes:
+                del running_processes[session_id]
+
+
 def cleanup_sessions():
     """Cleanup expired sessions"""
     with session_lock:
@@ -54,6 +187,9 @@ def cleanup_sessions():
         
         # Remove expired sessions
         for session_id in expired_sessions:
+            # Terminate any running processes
+            terminate_process(session_id)
+            
             log_activity('session', {
                 'action': 'expired',
                 'session_id': session_id,
@@ -64,6 +200,14 @@ def cleanup_sessions():
     # Schedule next cleanup
     threading.Timer(60.0, cleanup_sessions).start()  # Run every minute
 
+
+# Handle process cleanup on shutdown
+def cleanup_on_exit():
+    """Clean up all running processes when the server shuts down"""
+    for session_id in list(running_processes.keys()):
+        terminate_process(session_id)
+
+atexit.register(cleanup_on_exit)
 
 # Start session cleanup thread
 cleanup_sessions()
@@ -127,7 +271,9 @@ def create_session():
     # Create a new session
     session_id = str(uuid.uuid4())
     home_dir = os.path.join('user_data', session_id)
-    os.makedirs(home_dir, exist_ok=True)
+    
+    # Set up the user environment with necessary files and directories
+    setup_user_environment(home_dir)
     
     with session_lock:
         sessions[session_id] = {
@@ -137,6 +283,21 @@ def create_session():
             'last_accessed': time.time(),
             'home_dir': home_dir
         }
+    
+    # Initialize session with customized environment
+    try:
+        # Run initial setup commands (source .bashrc, etc.)
+        process = subprocess.Popen(
+            "source .bashrc 2>/dev/null || true",
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=home_dir
+        )
+        process.communicate(timeout=5)  # Short timeout for initialization
+    except (subprocess.TimeoutExpired, Exception):
+        pass  # Ignore errors during initialization
     
     log_activity('session', {
         'action': 'created',
@@ -184,7 +345,9 @@ def execute_command():
                 # Create a new session
                 session_id = str(uuid.uuid4())
                 home_dir = os.path.join('user_data', session_id)
-                os.makedirs(home_dir, exist_ok=True)
+                
+                # Set up the user environment with necessary files
+                setup_user_environment(home_dir)
                 
                 with session_lock:
                     sessions[session_id] = {
@@ -211,6 +374,56 @@ def execute_command():
     
     if not command:
         return jsonify({'error': 'Command is required'}), 400
+    
+    # Handle special commands
+    if command.strip() == 'help':
+        help_path = os.path.join(session['home_dir'], 'help.txt')
+        try:
+            with open(help_path, 'r') as f:
+                help_text = f.read()
+            return jsonify({'output': help_text})
+        except Exception:
+            pass  # Fall through to regular command execution
+    
+    elif command.strip() == 'install-python':
+        # Run the Python setup script
+        script_path = os.path.join(session['home_dir'], '.local', 'bin', 'install-python-pip')
+        if os.path.exists(script_path):
+            command = f"bash {script_path}"
+        else:
+            return jsonify({
+                'error': 'Python installation helper script not found. Please contact the administrator.'
+            }), 500
+    
+    elif command.strip() == 'install-node':
+        # Run the Node.js setup script
+        script_path = os.path.join(session['home_dir'], '.local', 'bin', 'install-node-npm')
+        if os.path.exists(script_path):
+            command = f"bash {script_path}"
+        else:
+            return jsonify({
+                'error': 'Node.js installation helper script not found. Please contact the administrator.'
+            }), 500
+    
+    # Prevent potentially dangerous or resource-intensive commands
+    disallowed_commands = [
+        'sudo ', 'su ', 'chmod 777 ', 'chmod -R 777 ', 'rm -rf /', 'dd if=/dev/zero',
+        '> /dev/sda', ':(){ :|:& };:'  # Fork bomb
+    ]
+    
+    if not ENABLE_SYSTEM_COMMANDS:
+        dangerous_prefixes = ['apt', 'apt-get', 'yum', 'dnf', 'pacman', 'systemctl', 'service']
+        for prefix in dangerous_prefixes:
+            if command.strip().startswith(prefix):
+                return jsonify({
+                    'error': f"System command '{prefix}' is disabled. Please use user-level installations instead."
+                }), 403
+    
+    for bad_cmd in disallowed_commands:
+        if bad_cmd in command:
+            return jsonify({
+                'error': f"Command contains disallowed operation: {bad_cmd}"
+            }), 403
         
     # Log command for audit
     log_activity('command', {
@@ -220,34 +433,79 @@ def execute_command():
         'command': command
     })
     
+    # Terminate any existing process for this session
+    terminate_process(session_id)
+    
     try:
         # Create a working directory for this session if it doesn't exist
         os.makedirs(session['home_dir'], exist_ok=True)
         
-        # Execute command
+        # Handle special command: pip install (convert to user installation)
+        if command.strip().startswith('pip install ') and '--user' not in command:
+            # Modify to use --user flag for installing in user directory
+            command = command.replace('pip install ', 'pip install --user ')
+        
+        # Add environment variables to help user-level installations
+        env = os.environ.copy()
+        env['HOME'] = session['home_dir']  
+        env['PYTHONUSERBASE'] = os.path.join(session['home_dir'], '.local')
+        env['PATH'] = os.path.join(session['home_dir'], '.local', 'bin') + ':' + env.get('PATH', '')
+        env['USER'] = 'terminal-user'  # Provide a username for commands that need it
+        
+        # Execute command with bash to ensure .bashrc is sourced
+        full_command = f'cd {session["home_dir"]} && source .bashrc 2>/dev/null || true; {command}'
+        
+        # Start process in its own process group
         process = subprocess.Popen(
-            command,
+            full_command,
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            cwd=session['home_dir']
+            cwd=session['home_dir'],
+            env=env,
+            preexec_fn=os.setsid  # Create new process group
         )
         
-        stdout, stderr = process.communicate(timeout=60)  # 60 second timeout
+        # Store process information
+        running_processes[session_id] = {
+            'process': process,
+            'start_time': time.time()
+        }
         
-        if process.returncode != 0:
-            return jsonify({
-                'error': stderr or 'Command failed',
-                'exitCode': process.returncode
-            }), 400
+        try:
+            stdout, stderr = process.communicate(timeout=COMMAND_TIMEOUT)
+            # Remove from running processes if completed
+            if session_id in running_processes:
+                del running_processes[session_id]
+                
+            if process.returncode != 0:
+                # Return both stdout and stderr for better debugging
+                error_message = stderr or 'Command failed with no error output'
+                output = stdout or ''
+                if output and error_message:
+                    combined = f"STDOUT:\n{output}\n\nERROR:\n{error_message}"
+                else:
+                    combined = error_message
+                    
+                return jsonify({
+                    'error': combined,
+                    'exitCode': process.returncode
+                }), 400
+                
+            return jsonify({'output': stdout})
             
-        return jsonify({'output': stdout})
-        
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'Command timed out'}), 408
+        except subprocess.TimeoutExpired:
+            # Keep process running but return timeout message
+            return jsonify({
+                'error': f'Command exceeded {COMMAND_TIMEOUT} second timeout limit. ' + 
+                         'It continues running in the background. ' +
+                         'Check results later or start a new command.'
+            }), 408
         
     except Exception as e:
+        # Cleanup any processes on error
+        terminate_process(session_id)
         return jsonify({'error': f'Failed to execute command: {str(e)}'}), 500
 
 
