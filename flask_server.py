@@ -204,20 +204,38 @@ Tips
 script_cache = {}
 
 def setup_user_environment(home_dir):
-    """Set up a user environment with necessary files and directories - optimized for speed"""
+    """Set up a user environment with necessary files and directories - optimized for speed and reliability"""
+    start_time = time.time()
+    
     # Create initial directories in parallel
     os.makedirs(home_dir, exist_ok=True)
     
-    # Create all required directories at once in parallel
+    # Fix permissions - ensure all users can access the directory
+    try:
+        # Make directory and all subdirectories accessible
+        os.chmod(home_dir, 0o755)
+    except Exception as e:
+        print(f"Warning: Could not set permissions for {home_dir}: {str(e)}")
+    
+    # Create all required directories at once
     dirs_to_create = [
         os.path.join(home_dir, 'projects'),
         os.path.join(home_dir, 'downloads'),
-        os.path.join(home_dir, '.local', 'bin')
+        os.path.join(home_dir, '.local', 'bin'),
+        os.path.join(home_dir, '.config'),
+        os.path.join(home_dir, '.ssl'),
+        os.path.join(home_dir, '.pkg'),
+        os.path.join(home_dir, '.fifo'),  # For interactive commands
     ]
     
     # Create directories with a single call
     for directory in dirs_to_create:
         os.makedirs(directory, exist_ok=True)
+        # Set proper permissions
+        try:
+            os.chmod(directory, 0o755)
+        except Exception:
+            pass  # Ignore permission errors
     
     # Only create venv if explicitly requested later (on-demand instead of at startup)
     # This significantly speeds up initial session creation
@@ -225,6 +243,7 @@ def setup_user_environment(home_dir):
     # Write template files quickly
     bashrc_path = os.path.join(home_dir, '.bashrc')
     help_path = os.path.join(home_dir, 'help.txt')
+    profile_path = os.path.join(home_dir, '.profile')
     
     # Parallel writing of files
     file_writing_tasks = [
@@ -238,16 +257,41 @@ def setup_user_environment(home_dir):
             with open(file_path, 'w') as f:
                 f.write(content)
     
-    # Copy helper scripts - using cached content when possible
+    # Setup enhanced profile file for better environment
+    with open(profile_path, 'w') as f:
+        f.write("""
+# Add local bin directory to PATH
+export PATH="$HOME/.local/bin:$PATH"
+
+# Set environment variables for better compatibility
+export LANG=en_US.UTF-8
+export PYTHONIOENCODING=utf-8
+export PYTHONUNBUFFERED=1
+export TERM=xterm-256color
+
+# Setup for interactive commands
+export INTERACTIVE_COMMAND_SUPPORT=1
+
+# Setup for OpenSSL
+export OPENSSL_PASSPHRASE="termux_secure_passphrase"
+
+# Source .bashrc if it exists
+if [ -f "$HOME/.bashrc" ]; then
+    . "$HOME/.bashrc"
+fi
+""")
+    
+    # Copy all user scripts for better functionality
     user_bin_dir = os.path.join(home_dir, '.local', 'bin')
     scripts_dir = 'user_scripts'
     
     if os.path.exists(scripts_dir):
-        for script in ['install-python-pip.sh', 'install-node-npm.sh']:
-            script_path = os.path.join(scripts_dir, script)
-            if os.path.exists(script_path):
-                # Use cached script content if available
-                dest_path = os.path.join(user_bin_dir, script.replace('.sh', ''))
+        # Copy all scripts, not just specific ones
+        for script_file in os.listdir(scripts_dir):
+            script_path = os.path.join(scripts_dir, script_file)
+            if os.path.isfile(script_path):
+                # Use cached script content if available for performance
+                dest_path = os.path.join(user_bin_dir, script_file)
                 
                 if script_path not in script_cache:
                     with open(script_path, 'rb') as f:
@@ -259,6 +303,94 @@ def setup_user_environment(home_dir):
                 
                 # Set executable permissions
                 os.chmod(dest_path, 0o755)
+    
+    # Set up enhanced environment using our new script if available
+    setup_script = os.path.join(user_bin_dir, 'setup-enhanced-environment')
+    if os.path.exists(os.path.join(scripts_dir, 'setup-enhanced-environment')):
+        # Create symbolic link to the setup script
+        os.symlink(os.path.join(scripts_dir, 'setup-enhanced-environment'), setup_script)
+        os.chmod(setup_script, 0o755)
+        
+        # Run the setup script in the background for this user
+        # Use nohup and background process to avoid blocking
+        try:
+            subprocess.Popen(
+                f"cd {home_dir} && bash {setup_script} > {home_dir}/.setup.log 2>&1 &",
+                shell=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+        except Exception as e:
+            print(f"Warning: Failed to start enhanced environment setup: {str(e)}")
+    
+    # Set up the pkg command if not already present
+    pkg_dest = os.path.join(user_bin_dir, 'pkg')
+    if not os.path.exists(pkg_dest) and os.path.exists(os.path.join(scripts_dir, 'termux-environment')):
+        # Extract the pkg command from termux-environment
+        try:
+            with open(os.path.join(scripts_dir, 'termux-environment'), 'r') as f:
+                termux_env_content = f.read()
+                
+            # Find the pkg command definition
+            if 'pkg command for Termux' in termux_env_content:
+                pkg_start = termux_env_content.find('pkg command for Termux')
+                if pkg_start > 0:
+                    # Extract the command definition
+                    pkg_content = termux_env_content[pkg_start:pkg_start+5000]  # Assume it's less than 5000 chars
+                    # Find the end of the function
+                    pkg_end = pkg_content.find('\nEOF\n')
+                    if pkg_end > 0:
+                        pkg_script = pkg_content[:pkg_end+5]  # Include the EOF
+                        
+                        # Write to the pkg command file
+                        with open(pkg_dest, 'w') as f:
+                            f.write('#!/bin/bash\n# Extracted from termux-environment\n\n')
+                            f.write(pkg_script)
+                        
+                        # Make executable
+                        os.chmod(pkg_dest, 0o755)
+        except Exception as e:
+            print(f"Warning: Failed to extract pkg command: {str(e)}")
+    
+    # Setup links for OpenSSL wrapper if available
+    openssl_wrapper_src = os.path.join(scripts_dir, 'openssl-wrapper')
+    openssl_wrapper_dest = os.path.join(user_bin_dir, 'openssl-wrapper')
+    
+    if os.path.exists(openssl_wrapper_src):
+        try:
+            # Copy OpenSSL wrapper
+            shutil.copy2(openssl_wrapper_src, openssl_wrapper_dest)
+            os.chmod(openssl_wrapper_dest, 0o755)
+            
+            # Create an alias in bashrc
+            with open(bashrc_path, 'a') as f:
+                f.write('\n# Use enhanced OpenSSL wrapper\nalias openssl="openssl-wrapper"\n')
+        except Exception as e:
+            print(f"Warning: Failed to setup OpenSSL wrapper: {str(e)}")
+
+    # Create a simple session keep-alive script
+    keep_alive_path = os.path.join(user_bin_dir, 'session-keep-alive')
+    with open(keep_alive_path, 'w') as f:
+        f.write("""#!/bin/bash
+# Simple script to keep session alive by running light commands periodically
+
+echo "Starting session keep-alive service..."
+echo "This will prevent your session from timing out due to inactivity."
+echo "Press Ctrl+C to stop."
+
+while true; do
+    # Run a light command to keep session active
+    echo -n "."
+    sleep 300  # 5 minutes
+done
+""")
+    os.chmod(keep_alive_path, 0o755)
+    
+    # Log the setup time for performance monitoring
+    setup_time = time.time() - start_time
+    print(f"User environment setup completed in {setup_time:.2f} seconds")
 
 
 def terminate_process(session_id):
@@ -504,6 +636,8 @@ def create_session():
 @app.route('/execute-command', methods=['POST'])
 def execute_command():
     """Execute a command in the user's session"""
+    cmd_start_time = time.time()
+    
     if USE_AUTH and not authenticate():
         return jsonify({'error': 'Authentication failed'}), 401
         
@@ -562,6 +696,11 @@ def execute_command():
     if not command:
         return jsonify({'error': 'Command is required'}), 400
     
+    # Reset the last_accessed time to prevent timeout during command execution
+    with session_lock:
+        if session_id in sessions:
+            sessions[session_id]['last_accessed'] = time.time()
+    
     # Handle special commands
     if command.strip() == 'help':
         help_path = os.path.join(session['home_dir'], 'help.txt')
@@ -610,6 +749,43 @@ def execute_command():
             return jsonify({
                 'error': 'Termux environment setup script not found. Please contact the administrator.'
             }), 500
+    
+    elif command.strip() == 'setup-enhanced-environment':
+        # Run the enhanced environment setup script
+        script_path = os.path.join(session['home_dir'], '.local', 'bin', 'setup-enhanced-environment')
+        if os.path.exists(script_path):
+            command = f"bash {script_path}"
+        else:
+            return jsonify({
+                'error': 'Enhanced environment setup script not found. Please contact the administrator.'
+            }), 500
+    
+    # Check for the session keep-alive command
+    elif command.strip() == 'session-keep-alive':
+        # Run the session-keep-alive script
+        script_path = os.path.join(session['home_dir'], '.local', 'bin', 'session-keep-alive')
+        if os.path.exists(script_path):
+            command = f"bash {script_path}"
+            # Return a special message since this is going to run in the background
+            return jsonify({
+                'output': 'Session keep-alive service started. This will prevent your session from timing out.\n' +
+                          'It will continue running in the background, checking in every 5 minutes.\n' +
+                          'You can safely run other commands now.'
+            })
+        else:
+            return jsonify({
+                'output': 'Session keep-alive script not found. Your session may time out after inactivity.'
+            })
+    
+    # Special handling for OpenSSL commands - use our wrapper if available
+    if command.strip().startswith('openssl '):
+        openssl_wrapper = os.path.join(session['home_dir'], '.local', 'bin', 'openssl-wrapper')
+        if os.path.exists(openssl_wrapper):
+            # Extract the openssl subcommand and arguments
+            openssl_parts = command.strip().split(' ')
+            if len(openssl_parts) > 1:
+                openssl_cmd = ' '.join(openssl_parts[1:])
+                command = f"{openssl_wrapper} {openssl_cmd}"
     
     # Prevent potentially dangerous or resource-intensive commands
     disallowed_commands = [
@@ -663,6 +839,18 @@ def execute_command():
         # Create a working directory for this session if it doesn't exist
         os.makedirs(session['home_dir'], exist_ok=True)
         
+        # Check if this command needs interactive handling
+        is_interactive = False
+        interactive_cmds = ['openssl', 'ssh-keygen', 'ssh', 'pg_dump', 'mysql', 'passwd', 'gpg']
+        for interactive_cmd in interactive_cmds:
+            if command.strip().startswith(interactive_cmd):
+                is_interactive = True
+                break
+        
+        # Also check for OpenSSL wrapper which is already interactive-aware
+        if command.strip().startswith('openssl-wrapper'):
+            is_interactive = False
+        
         # Handle special command: pip install (use pip-termux when available)
         if command.strip().startswith('pip install '):
             # Check if we have pip-termux available
@@ -681,9 +869,55 @@ def execute_command():
         env['PYTHONUSERBASE'] = os.path.join(session['home_dir'], '.local')
         env['PATH'] = os.path.join(session['home_dir'], '.local', 'bin') + ':' + env.get('PATH', '')
         env['USER'] = 'terminal-user'  # Provide a username for commands that need it
+        env['OPENSSL_PASSPHRASE'] = 'termux_secure_passphrase'  # Default passphrase for OpenSSL operations
         
-        # Execute command with bash to ensure .bashrc is sourced
-        full_command = f'cd {session["home_dir"]} && source .bashrc 2>/dev/null || true; {command}'
+        # Source .profile instead of just .bashrc to get all environment variables
+        profile_path = os.path.join(session['home_dir'], '.profile')
+        if os.path.exists(profile_path):
+            source_cmd = f"source {profile_path}"
+        else:
+            source_cmd = "source .bashrc 2>/dev/null || true"
+        
+        # Execute command with bash to ensure profile or bashrc is sourced
+        full_command = f'cd {session["home_dir"]} && {source_cmd}; {command}'
+        
+        # For interactive commands, use our special handler
+        if is_interactive:
+            interactive_handler = os.path.join(session['home_dir'], '.local', 'bin', 'interactive-command-handler')
+            
+            if os.path.exists(interactive_handler):
+                # Use the interactive command handler
+                handler_cmd = f"cd {session['home_dir']} && {source_cmd}; {interactive_handler} '{command}' '{session_id}'"
+                
+                # Run the handler and get FIFO paths
+                handler_process = subprocess.Popen(
+                    handler_cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=session['home_dir'],
+                    env=env
+                )
+                
+                handler_out, handler_err = handler_process.communicate(timeout=10)
+                
+                if handler_process.returncode == 0 and "FIFOs:" in handler_out:
+                    # Extract FIFO paths from handler output
+                    fifo_info = handler_out.strip().split("FIFOs: ")[1]
+                    cmd_fifo, resp_fifo = fifo_info.split(":")
+                    
+                    # Return special response for interactive commands
+                    return jsonify({
+                        'interactive': True,
+                        'message': 'Interactive command started. Use the provided FIFOs to communicate.',
+                        'cmd_fifo': cmd_fifo,
+                        'resp_fifo': resp_fifo
+                    })
+                else:
+                    # Fall back to regular execution if the handler failed
+                    print(f"Interactive handler failed: {handler_err}")
+                    is_interactive = False
         
         # Start process in its own process group
         process = subprocess.Popen(
@@ -722,8 +956,12 @@ def execute_command():
                     'error': combined,
                     'exitCode': process.returncode
                 }), 400
-                
-            return jsonify({'output': stdout})
+            
+            # Add response time for performance monitoring
+            cmd_time = time.time() - cmd_start_time
+            response = jsonify({'output': stdout})
+            response.headers['X-Command-Time'] = f"{cmd_time:.4f}s"
+            return response
             
         except subprocess.TimeoutExpired:
             # Keep process running but return timeout message

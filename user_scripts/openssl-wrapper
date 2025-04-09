@@ -1,0 +1,181 @@
+#!/bin/bash
+# Enhanced OpenSSL Wrapper for Termux environment
+# Handles interactive prompts and provides better error reporting
+
+# Define colors for better readability
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Temporary directory for OpenSSL operations
+SSL_DIR="$HOME/.ssl"
+mkdir -p "$SSL_DIR"
+
+# Default password for non-interactive mode
+DEFAULT_PASSPHRASE="termux_secure_passphrase"
+
+# Help message
+show_help() {
+    echo -e "${BLUE}Enhanced OpenSSL Wrapper${NC}"
+    echo -e "A user-friendly wrapper for OpenSSL in Termux environment\n"
+    echo "Usage: openssl-wrapper [openssl-command] [options]"
+    echo ""
+    echo "Examples:"
+    echo "  openssl-wrapper genrsa -out key.pem 2048"
+    echo "  openssl-wrapper genrsa -aes256 -out protected.key 4096"
+    echo "  openssl-wrapper req -new -key key.pem -out request.csr"
+    echo ""
+    echo "Non-interactive mode:"
+    echo "  Use the --non-interactive flag to avoid interactive prompts"
+    echo "  For password-protected keys, a default passphrase will be used"
+    echo ""
+    echo "This wrapper handles:"
+    echo "  - Password prompts for key generation"
+    echo "  - Certificate signing requests"
+    echo "  - Self-signed certificates"
+    echo "  - And passes through all other OpenSSL commands"
+}
+
+# Handle key generation (genrsa command)
+handle_genrsa() {
+    # Check if this is a password-protected key
+    if [[ "$*" == *"-aes"* ]]; then
+        echo -e "${YELLOW}Generating password-protected RSA key...${NC}"
+        
+        # Extract output file and key size
+        local output_file=$(echo "$*" | grep -o "\-out [^ ]*" | cut -d' ' -f2)
+        local encryption=$(echo "$*" | grep -o "\-aes[^ ]*" | head -1)
+        local bits=$(echo "$*" | grep -o "[0-9]*$")
+        
+        # Set defaults if not specified
+        if [ -z "$output_file" ]; then
+            output_file="$SSL_DIR/key.pem"
+            echo -e "${YELLOW}No output file specified, using: $output_file${NC}"
+        fi
+        
+        if [ -z "$encryption" ]; then
+            encryption="-aes256"
+        fi
+        
+        if [ -z "$bits" ]; then
+            bits="2048"
+        fi
+        
+        # Generate key with a default passphrase for non-interactive use
+        openssl genrsa $encryption -passout pass:$DEFAULT_PASSPHRASE -out "$output_file" "$bits"
+        
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}Generated password-protected RSA key: $output_file${NC}"
+            echo -e "${YELLOW}A default passphrase was used: $DEFAULT_PASSPHRASE${NC}"
+            echo "For subsequent commands, you can use:"
+            echo "  openssl ... -passin pass:$DEFAULT_PASSPHRASE ..."
+            return 0
+        else
+            echo -e "${RED}Failed to generate key${NC}"
+            return 1
+        fi
+    else
+        # Regular RSA key without password
+        echo -e "${YELLOW}Generating RSA key...${NC}"
+        openssl genrsa "$@"
+        return $?
+    fi
+}
+
+# Handle certificate signing requests (req command)
+handle_req() {
+    # Check if this is a new CSR
+    if [[ "$*" == *"-new"* ]]; then
+        echo -e "${YELLOW}Creating Certificate Signing Request (CSR)...${NC}"
+        
+        # Create a config file with default values
+        local config_file="$SSL_DIR/openssl.cnf"
+        cat > "$config_file" << EOF
+[req]
+default_bits = 2048
+prompt = no
+default_md = sha256
+distinguished_name = dn
+
+[dn]
+C=US
+ST=California
+L=San Francisco
+O=Termux User
+OU=Mobile Development
+CN=localhost
+emailAddress=user@example.com
+EOF
+
+        # Extract key and output file
+        local has_key=$(echo "$*" | grep -o "\-key [^ ]*")
+        local has_out=$(echo "$*" | grep -o "\-out [^ ]*")
+        
+        if [ -z "$has_key" ]; then
+            echo -e "${RED}Error: No key file specified. Use -key option.${NC}"
+            return 1
+        fi
+        
+        # Add config file to the arguments
+        local new_args=$(echo "$@" | sed "s|-new|-new -config $config_file|")
+        
+        # For password-protected keys, add passphrase if needed
+        if [[ "$*" == *".key"* || "$*" == *"encrypted"* ]]; then
+            if [[ "$*" != *"-passin"* ]]; then
+                new_args="$new_args -passin pass:$DEFAULT_PASSPHRASE"
+            fi
+        fi
+        
+        echo -e "${YELLOW}Running with preset values (no interactive prompts)${NC}"
+        openssl req $new_args
+        
+        if [ $? -eq 0 ]; then
+            local output_file=$(echo "$*" | grep -o "\-out [^ ]*" | cut -d' ' -f2)
+            if [ -n "$output_file" ]; then
+                echo -e "${GREEN}CSR created successfully: $output_file${NC}"
+            else
+                echo -e "${GREEN}CSR created successfully${NC}"
+            fi
+            return 0
+        else
+            echo -e "${RED}Failed to create CSR${NC}"
+            return 1
+        fi
+    else
+        # Other req commands, pass through
+        openssl req "$@"
+        return $?
+    fi
+}
+
+# Main function
+main() {
+    if [ $# -eq 0 ] || [[ "$1" == "--help" ]]; then
+        show_help
+        return 0
+    fi
+    
+    # First argument is the OpenSSL command
+    local cmd="$1"
+    shift
+    
+    case "$cmd" in
+        genrsa)
+            handle_genrsa "$@"
+            ;;
+        req)
+            handle_req "$@"
+            ;;
+        *)
+            # Pass through any other OpenSSL commands
+            openssl "$cmd" "$@"
+            ;;
+    esac
+    
+    return $?
+}
+
+# Execute the main function with all arguments
+main "$@"

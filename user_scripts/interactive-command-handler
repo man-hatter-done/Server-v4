@@ -1,0 +1,167 @@
+#!/bin/bash
+# Interactive command handler for the terminal server
+# This script allows proper handling of commands that require user input
+
+# Set up a named pipe for interactive communication
+setup_fifo() {
+    local fifo_dir="$HOME/.fifo"
+    mkdir -p "$fifo_dir"
+    
+    # Create unique FIFOs for this session
+    local session_id="$1"
+    local cmd_fifo="$fifo_dir/cmd_${session_id}.fifo"
+    local resp_fifo="$fifo_dir/resp_${session_id}.fifo"
+    
+    # Remove existing FIFOs if they exist
+    rm -f "$cmd_fifo" "$resp_fifo"
+    
+    # Create new FIFOs
+    mkfifo "$cmd_fifo"
+    mkfifo "$resp_fifo"
+    
+    # Return the FIFO paths
+    echo "$cmd_fifo:$resp_fifo"
+}
+
+# Run a command interactively
+run_interactive() {
+    local command="$1"
+    local session_id="$2"
+    
+    # Setup communication channels
+    local fifos=$(setup_fifo "$session_id")
+    local cmd_fifo=$(echo $fifos | cut -d':' -f1)
+    local resp_fifo=$(echo $fifos | cut -d':' -f2)
+    
+    # Start the command in the background, connected to our FIFOs
+    (
+        # Use expect-like behavior to handle interactive prompts
+        # This allows automatic detection of password prompts
+        $command < "$cmd_fifo" > "$resp_fifo" 2>&1 &
+        cmd_pid=$!
+        
+        # Wait for the command to finish
+        wait $cmd_pid
+        
+        # Send EOF to the response FIFO to indicate command completion
+        echo "<<COMMAND_COMPLETED>>" > "$resp_fifo"
+        
+        # Clean up FIFOs after command completes
+        sleep 1
+        rm -f "$cmd_fifo" "$resp_fifo"
+    ) &
+    
+    # Return the FIFO paths for communication
+    echo "$cmd_fifo:$resp_fifo"
+}
+
+# Handle OpenSSL specific interactive commands
+handle_openssl_interactive() {
+    local full_command="$1"
+    local session_id="$2"
+    
+    # Create a temporary directory for OpenSSL
+    local ssl_dir="$HOME/.ssl"
+    mkdir -p "$ssl_dir"
+    
+    # Check if this is a password-protected key generation
+    if [[ "$full_command" == *"openssl genrsa -aes"* ]]; then
+        # Extract key bits and output file
+        local output_file=$(echo "$full_command" | grep -o "\-out [^ ]*" | cut -d' ' -f2)
+        local bits=$(echo "$full_command" | grep -o "\-[^ ]* [0-9]*$" | awk '{print $2}')
+        
+        if [ -z "$output_file" ]; then
+            output_file="$ssl_dir/key.pem"
+        fi
+        
+        if [ -z "$bits" ]; then
+            bits="2048"
+        fi
+        
+        # For password-protected keys, use a preset passphrase for easier handling
+        # In a real environment, this would be more secure
+        local passphrase="termux_secure_passphrase"
+        
+        # Generate the key non-interactively with a preset passphrase
+        openssl genrsa -aes256 -passout pass:$passphrase -out "$output_file" "$bits"
+        
+        # Return success message with instructions
+        echo "Generated password-protected RSA key in $output_file"
+        echo "A preset passphrase was used: $passphrase"
+        echo "In a real environment, you would choose your own secure passphrase."
+        echo ""
+        echo "To use this key without password prompts, you can:"
+        echo "1. Export the passphrase: export KEY_PASSPHRASE=$passphrase"
+        echo "2. Use it with OpenSSL: openssl ... -passin env:KEY_PASSPHRASE ..."
+        
+        return 0
+    elif [[ "$full_command" == *"openssl req"* && "$full_command" == *"-new"* ]]; then
+        # For certificate requests, create a config file with preset values
+        local config_file="$ssl_dir/openssl.cnf"
+        cat > "$config_file" << EOF
+[req]
+default_bits = 2048
+prompt = no
+default_md = sha256
+distinguished_name = dn
+
+[dn]
+C=US
+ST=California
+L=San Francisco
+O=Termux User
+OU=Mobile Development
+CN=localhost
+emailAddress=user@example.com
+EOF
+
+        # Extract the key and output file
+        local key_file=$(echo "$full_command" | grep -o "\-key [^ ]*" | cut -d' ' -f2)
+        local output_file=$(echo "$full_command" | grep -o "\-out [^ ]*" | cut -d' ' -f2)
+        
+        if [ -z "$key_file" ]; then
+            echo "Error: No key file specified"
+            return 1
+        fi
+        
+        if [ -z "$output_file" ]; then
+            output_file="$ssl_dir/req.csr"
+        fi
+        
+        # Run the command non-interactively with the config file
+        openssl req -new -key "$key_file" -out "$output_file" -config "$config_file"
+        
+        # Return success message
+        echo "Generated CSR in $output_file using preset values."
+        echo "You can examine it with: openssl req -in $output_file -text -noout"
+        
+        return 0
+    fi
+    
+    # For other OpenSSL commands, run normally but be prepared for interactive prompts
+    return 1  # Not handled specifically
+}
+
+# Main function to process the command
+main() {
+    local command="$1"
+    local session_id="$2"
+    
+    # Check if this is an OpenSSL command that needs special handling
+    if [[ "$command" == "openssl"* ]]; then
+        if handle_openssl_interactive "$command" "$session_id"; then
+            # Command was handled by our special handler
+            return 0
+        fi
+    fi
+    
+    # Run the command interactively
+    local fifos=$(run_interactive "$command" "$session_id")
+    echo "Command running interactively. FIFOs: $fifos"
+    
+    # Return the FIFO paths for the server to communicate with the process
+    echo "$fifos"
+}
+
+# Execute the main function with the provided arguments
+main "$@"
