@@ -1,6 +1,6 @@
 # iOS Terminal
 
-A lightweight, Python-based terminal server that provides a Linux command environment for iOS apps, similar to Termux for Android. This server is designed to be easily accessible from Swift applications without requiring Docker or complex setups.
+A high-performance, Python-based terminal server that provides a Linux command environment for iOS apps, similar to Termux for Android. This server is designed to be easily accessible from Swift applications and offers enhanced stability and performance optimizations.
 
 ## Features
 
@@ -11,6 +11,65 @@ A lightweight, Python-based terminal server that provides a Linux command enviro
 - **Web Terminal Interface**: Test commands directly in your browser
 - **No Docker Required**: Run directly on the server without containerization
 - **Fast Deployment**: Quick to deploy to Render.com or other platforms
+- **High Performance**: Optimized for concurrent users with advanced session pooling
+- **Memory Management**: Intelligent memory monitoring to prevent OOM issues
+- **Enhanced Environment**: Automatically sets up a rich command environment
+- **Health Monitoring**: Built-in healthchecks and resource management
+
+## Performance Optimizations
+
+This server includes several performance optimizations to handle high traffic and ensure stability:
+
+### Session Pooling
+
+Pre-creates session environments for faster user allocation:
+- Configurable pool size (default: 10)
+- Automatic pool refilling
+- Thread-safe pool management
+- Expired session cleanup
+
+### Memory Management
+
+Intelligent memory monitoring prevents out-of-memory crashes:
+- Automatic garbage collection when memory usage is high
+- Cache clearing under memory pressure
+- Dynamic session cleanup when resources are low
+- Background monitoring thread
+
+### Worker Optimization
+
+Gunicorn worker configuration is optimized for concurrent users:
+- Multiple workers (12 by default)
+- Thread-based request handling
+- Graceful timeouts and restarts
+- Preloading for faster startup
+
+### Resource Management
+
+Docker container resource limits prevent host resource starvation:
+- Memory limits and reservations
+- CPU allocation
+- File descriptor limits
+- Process limits
+
+## Configuration
+
+The server can be configured using environment variables:
+
+```bash
+# Basic Configuration
+DEBUG=false                  # Set to true for development logging
+PORT=3000                    # HTTP port to listen on
+SESSION_TIMEOUT=3600         # Session timeout in seconds
+USE_AUTH=false               # Enable authentication
+COMMAND_TIMEOUT=300          # Command execution timeout
+
+# Performance Configuration
+SESSION_POOL_SIZE=10         # Number of pre-created sessions
+MAX_POOL_AGE=1800            # Maximum age of pooled sessions
+```
+
+These can be set in the docker-compose.yaml file or in your deployment environment.
 
 ## API Reference
 

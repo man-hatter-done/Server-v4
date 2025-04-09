@@ -8,19 +8,45 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - DEBUG=true
+      - DEBUG=false  # Set to false in production for better performance
       - PORT=3000
       - SESSION_TIMEOUT=3600
       - USE_AUTH=false
       - COMMAND_TIMEOUT=300
       - ENABLE_SYSTEM_COMMANDS=true
+      - SESSION_POOL_SIZE=10  # Pre-create this many session environments
+      - MAX_POOL_AGE=1800  # Maximum age of pooled sessions in seconds
     volumes:
       - ./user_data:/app/user_data
       - ./logs:/app/logs
       - ./user_scripts:/app/user_scripts
     restart: unless-stopped
+    # Set resource limits to prevent container from using too much host resources
+    deploy:
+      resources:
+        limits:
+          memory: 4G  # Increased memory limit for multiple workers
+          cpus: '2.0'  # Allow up to 2 full CPU cores
+        reservations:
+          memory: 2G  # Minimum memory reservation
+          cpus: '1.0'  # Minimum CPU reservation
+    # Configure healthcheck to restart container if it becomes unhealthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     # Add necessary capabilities for enhanced functionality
     cap_add:
       - SYS_PTRACE  # Allows process tracing needed for some developer tools
     security_opt:
       - seccomp=unconfined  # Less restrictive security profile for better compatibility
+    # Increase ulimits for better performance with many concurrent sessions
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      nproc:
+        soft: 65535
+        hard: 65535
