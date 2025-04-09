@@ -82,9 +82,10 @@ RUN chown -R www-data:www-data user_data logs
 # Expose the port
 EXPOSE 3000
 
-# Start using gunicorn with optimized settings and staggered worker startup
-# Reduced workers from 12 to 8 to prevent initialization resource contention
-# Added worker-tmp-dir to avoid /tmp disk contention issues
-# Removed preload flag which can cause worker initialization failures
-# Added more robust error handling and startup parameters
-CMD ["gunicorn", "--bind", "0.0.0.0:3000", "--workers", "8", "--threads", "6", "--worker-class", "gthread", "--worker-connections", "1000", "--timeout", "120", "--keep-alive", "5", "--max-requests", "500", "--max-requests-jitter", "100", "--graceful-timeout", "30", "--log-level", "info", "--worker-tmp-dir", "/dev/shm", "--capture-output", "--enable-stdio-inheritance", "--error-logfile", "logs/gunicorn-error.log", "--access-logfile", "logs/gunicorn-access.log", "--logger-class", "gunicorn.glogging.Logger", "--statsd-host", "localhost:8125", "--statsd-prefix", "terminal_server", "flask_server:app"]
+# Use the WebSockets-enabled runner script
+COPY run.py .
+RUN chmod +x run.py
+
+# Start using gunicorn with eventlet for WebSocket support
+# Modified to support Socket.IO using eventlet worker class
+CMD ["gunicorn", "--bind", "0.0.0.0:3000", "--worker-class", "eventlet", "--workers", "4", "--threads", "1", "--worker-connections", "1000", "--timeout", "120", "--keep-alive", "5", "--max-requests", "500", "--max-requests-jitter", "100", "--graceful-timeout", "30", "--log-level", "info", "--worker-tmp-dir", "/dev/shm", "--capture-output", "--enable-stdio-inheritance", "--error-logfile", "logs/gunicorn-error.log", "--access-logfile", "logs/gunicorn-access.log", "--logger-class", "gunicorn.glogging.Logger", "flask_server:app"]
