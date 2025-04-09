@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iOS Terminal - Modern Interface</title>
+    <link rel="stylesheet" href="style-v2.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta name="theme-color" content="#121212">
+</head>
+<body data-theme="dark">
+    <div class="container">
+        <header>
+            <div class="logo">
+                <i class="fas fa-terminal"></i>
+                <h1>iOS Terminal</h1>
+            </div>
+            <div class="status-bar">
+                <div id="status-indicator" class="status-indicator connecting">Connecting...</div>
+                <button id="mobile-menu-btn" class="mobile-menu-btn">
+                    <i class="fas fa-bars"></i>
+                </button>
+            </div>
+        </header>
+        
+        <main>
+            <div class="terminal-container">
+                <div id="progress-bar" class="progress-bar"></div>
+                <div id="terminal-output" class="terminal-output"></div>
+                <div class="input-line">
+                    <span id="prompt-text" class="prompt">~ $</span>
+                    <input type="text" id="command-input" placeholder="Enter command..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                </div>
+            </div>
+            
+            <div class="control-panel">
+                <div class="panel-section">
+                    <h3>Session Info</h3>
+                    <table class="info-table">
+                        <tr>
+                            <td>Session ID:</td>
+                            <td id="session-id">Not connected</td>
+                        </tr>
+                        <tr>
+                            <td>Created:</td>
+                            <td id="session-created">-</td>
+                        </tr>
+                        <tr>
+                            <td>Last Activity:</td>
+                            <td id="session-last-activity">-</td>
+                        </tr>
+                        <tr>
+                            <td>Expires In:</td>
+                            <td id="session-expires">-</td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <div class="panel-section">
+                    <h3>Appearance</h3>
+                    <div class="control-group">
+                        <label for="theme-selector">Theme:</label>
+                        <select id="theme-selector">
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                            <option value="matrix">Matrix</option>
+                            <option value="dracula">Dracula</option>
+                            <option value="solarized">Solarized</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="font-size-selector">Font Size:</label>
+                        <select id="font-size-selector">
+                            <option value="12">Small</option>
+                            <option value="14">Medium</option>
+                            <option value="16">Large</option>
+                            <option value="18">Extra Large</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="panel-section">
+                    <h3>Actions</h3>
+                    <div class="button-group">
+                        <button id="new-session-btn" class="btn primary">
+                            <i class="fas fa-plus-circle"></i> New Session
+                        </button>
+                        <button id="clear-terminal-btn" class="btn secondary">
+                            <i class="fas fa-eraser"></i> Clear Terminal
+                        </button>
+                        <button id="end-session-btn" class="btn danger">
+                            <i class="fas fa-trash-alt"></i> End Session
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="panel-section">
+                    <h3>Quick Commands</h3>
+                    <div class="quick-commands">
+                        <button class="quick-command" data-command="ls -la">ls -la</button>
+                        <button class="quick-command" data-command="pwd">pwd</button>
+                        <button class="quick-command" data-command="python3 --version">python3 --version</button>
+                        <button class="quick-command" data-command="help">help</button>
+                    </div>
+                </div>
+                
+                <div class="panel-section mobile-only">
+                    <div class="keyboard-helpers">
+                        <button class="keyboard-key" data-key="Tab">Tab</button>
+                        <button class="keyboard-key" data-key="ArrowUp">↑</button>
+                        <button class="keyboard-key" data-key="ArrowDown">↓</button>
+                        <button class="keyboard-key" data-key="ArrowLeft">←</button>
+                        <button class="keyboard-key" data-key="ArrowRight">→</button>
+                        <button class="keyboard-key" data-key="Ctrl-C">Ctrl+C</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+        
+        <footer>
+            <div class="footer-content">
+                <p>© 2025 iOS Terminal - <a href="https://github.com/Main-repo-bdg/Server-v4" target="_blank">GitHub</a></p>
+                <p>Type "help" for available commands</p>
+            </div>
+        </footer>
+    </div>
+    
+    <script src="terminal-v2.js"></script>
+    <script>
+        // Initialize quick commands
+        document.addEventListener('DOMContentLoaded', function() {
+            const quickCommands = document.querySelectorAll('.quick-command');
+            quickCommands.forEach(button => {
+                button.addEventListener('click', function() {
+                    const command = this.getAttribute('data-command');
+                    const commandInput = document.getElementById('command-input');
+                    commandInput.value = command;
+                    commandInput.focus();
+                });
+            });
+            
+            // Initialize keyboard helpers
+            const keyboardKeys = document.querySelectorAll('.keyboard-key');
+            keyboardKeys.forEach(button => {
+                button.addEventListener('click', function() {
+                    const key = this.getAttribute('data-key');
+                    const commandInput = document.getElementById('command-input');
+                    
+                    commandInput.focus();
+                    
+                    if (key === 'Tab') {
+                        // Simulate tab key
+                        document.dispatchEvent(new KeyboardEvent('keydown', {
+                            key: 'Tab',
+                            code: 'Tab',
+                            bubbles: true
+                        }));
+                    } else if (key === 'Ctrl-C') {
+                        // Send Ctrl+C to interrupt commands
+                        if (isExecuting) {
+                            addTerminalText('^C', 'interrupt');
+                            isExecuting = false;
+                        }
+                    } else {
+                        // Simulate arrow keys
+                        document.dispatchEvent(new KeyboardEvent('keydown', {
+                            key: key,
+                            code: key,
+                            bubbles: true
+                        }));
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>
