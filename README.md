@@ -1,20 +1,19 @@
-# Terminal Server
+# iOS Terminal
 
-A secure, multi-user terminal server that provides isolated Linux environments for each user, accessible via a REST API.
+A lightweight, Python-based terminal server that provides a Linux command environment for iOS apps, similar to Termux for Android. This server is designed to be easily accessible from Swift applications without requiring Docker or complex setups.
 
 ## Features
 
-- **User Isolation**: Each user gets their own Docker container
-- **Session Management**: API key and session-based authentication
-- **Resource Limits**: Prevent abuse with memory and CPU limits
-- **Comprehensive Tools**: Full Linux environment with development tools
-- **Secure**: Multiple security measures to prevent abuse
+- **Full Linux Command Access**: Execute any command you'd run in a terminal
+- **Session Persistence**: Your files and state are preserved between commands
+- **Python Support**: Run Python scripts and other interpreted languages
+- **Simple API**: Easy to integrate with iOS apps
+- **No Docker Required**: Run directly on the server without containerization
+- **Fast Deployment**: Quick to deploy to Render.com or other platforms
 
 ## API Reference
 
-### Authentication
-
-All endpoints require an API key sent in the `X-API-Key` header.
+The API is designed to be simple and compatible with the original Docker-based implementation, but without requiring API keys by default.
 
 ### Create Session
 
@@ -47,7 +46,6 @@ POST /execute-command
 
 **Headers:**
 ```
-X-API-Key: your-api-key
 X-Session-Id: your-session-id
 ```
 
@@ -61,7 +59,7 @@ X-Session-Id: your-session-id
 **Response:**
 ```json
 {
-  "output": "total 8\ndrwxr-xr-x 2 terminal-user terminal-user 4096 May 1 12:34 .\ndrwxr-xr-x 6 terminal-user terminal-user 4096 May 1 12:34 ..\n"
+  "output": "total 8\ndrwxr-xr-x 2 user user 4096 May 1 12:34 .\ndrwxr-xr-x 6 user user 4096 May 1 12:34 ..\n"
 }
 ```
 
@@ -73,7 +71,6 @@ GET /session
 
 **Headers:**
 ```
-X-API-Key: your-api-key
 X-Session-Id: your-session-id
 ```
 
@@ -95,7 +92,6 @@ DELETE /session
 
 **Headers:**
 ```
-X-API-Key: your-api-key
 X-Session-Id: your-session-id
 ```
 
@@ -106,88 +102,84 @@ X-Session-Id: your-session-id
 }
 ```
 
+## Deployment to Render.com
+
+This server can be easily deployed to Render.com:
+
+1. Fork this repository to your GitHub account
+2. Create a new Web Service on Render.com
+3. Connect to your forked GitHub repository
+4. Select "Docker" as the environment
+5. Choose the `Dockerfile.flask` file
+6. Click "Create Web Service"
+
 ## Swift Client
 
-Here's the Swift client code for accessing the terminal server:
+Here's the Swift client code for accessing the iOS Terminal server:
 
 ```swift
 import Foundation
-
-enum TerminalError: Error {
-    case invalidURL
-    case networkError(String)
-    case responseError(String)
-    case sessionError(String)
-    case parseError(String)
-}
 
 class TerminalService {
     static let shared = TerminalService()
     
     private let baseURL: String
-    private let apiKey: String
     private var sessionId: String?
     private var userId: String?
     
     private init() {
-        // Change these values for your production environment
-        self.baseURL = "https://backdoor-backend.onrender.com"
-        self.apiKey = "your-api-key-here"
+        // Change this URL to your deployed server
+        self.baseURL = "https://your-terminal-server.onrender.com"
     }
     
-    /// Creates a new terminal session for the user
-    /// - Parameter completion: Called with the session ID or an error
+    /// Creates a new terminal session
+    /// - Parameter completion: Called with session ID or an error
     func createSession(completion: @escaping (Result<String, Error>) -> Void) {
-        // Check if we already have a valid session
+        // Check for existing valid session
         if let existingSession = sessionId {
-            // Validate existing session
             validateSession { result in
                 switch result {
-                case .success(_):
-                    // Session is still valid
+                case .success:
                     completion(.success(existingSession))
-                case .failure(_):
-                    // Session is invalid, create a new one
+                case .failure:
                     self.createNewSession(completion: completion)
                 }
             }
         } else {
-            // No existing session, create a new one
             createNewSession(completion: completion)
         }
     }
     
     private func createNewSession(completion: @escaping (Result<String, Error>) -> Void) {
         guard let url = URL(string: "\(baseURL)/create-session") else {
-            completion(.failure(TerminalError.invalidURL))
+            completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
         }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.addValue(apiKey, forHTTPHeaderField: "X-API-Key")
         
-        // Include device identifier to ensure uniqueness
+        // Include device identifier for uniqueness
         let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
         let body: [String: Any] = ["userId": deviceId]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
-                completion(.failure(TerminalError.networkError(error.localizedDescription)))
+                completion(.failure(error))
                 return
             }
             
             guard let data = data else {
-                completion(.failure(TerminalError.responseError("No data received")))
+                completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "No data received"])))
                 return
             }
             
             do {
                 if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     if let errorMessage = json["error"] as? String {
-                        completion(.failure(TerminalError.responseError(errorMessage)))
+                        completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: errorMessage])))
                         return
                     }
                     
@@ -196,10 +188,10 @@ class TerminalService {
                         self.userId = json["userId"] as? String
                         completion(.success(newSessionId))
                     } else {
-                        completion(.failure(TerminalError.responseError("Invalid response format")))
+                        completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])))
                     }
                 } else {
-                    completion(.failure(TerminalError.responseError("Could not parse response")))
+                    completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Could not parse response"])))
                 }
             } catch {
                 completion(.failure(error))
@@ -209,30 +201,29 @@ class TerminalService {
     
     private func validateSession(completion: @escaping (Result<Bool, Error>) -> Void) {
         guard let sessionId = sessionId else {
-            completion(.failure(TerminalError.sessionError("No active session")))
+            completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "No active session"])))
             return
         }
         
         guard let url = URL(string: "\(baseURL)/session") else {
-            completion(.failure(TerminalError.invalidURL))
+            completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
         }
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.addValue(apiKey, forHTTPHeaderField: "X-API-Key")
         request.addValue(sessionId, forHTTPHeaderField: "X-Session-Id")
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
-                completion(.failure(TerminalError.networkError(error.localizedDescription)))
+                completion(.failure(error))
                 return
             }
             
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 // Session is invalid
                 self.sessionId = nil
-                completion(.failure(TerminalError.sessionError("Session expired")))
+                completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Session expired"])))
                 return
             }
             
@@ -240,7 +231,7 @@ class TerminalService {
         }.resume()
     }
     
-    /// Executes a command in the user's terminal session
+    /// Executes a command in the terminal session
     /// - Parameters:
     ///   - command: The command to execute
     ///   - completion: Called with the command output or an error
@@ -258,14 +249,13 @@ class TerminalService {
     
     private func executeCommandWithSession(_ command: String, sessionId: String, completion: @escaping (Result<String, Error>) -> Void) {
         guard let url = URL(string: "\(baseURL)/execute-command") else {
-            completion(.failure(TerminalError.invalidURL))
+            completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
         }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.addValue(apiKey, forHTTPHeaderField: "X-API-Key")
         request.addValue(sessionId, forHTTPHeaderField: "X-Session-Id")
         
         let body = ["command": command]
@@ -273,32 +263,32 @@ class TerminalService {
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
-                completion(.failure(TerminalError.networkError(error.localizedDescription)))
+                completion(.failure(error))
                 return
             }
             
             guard let data = data else {
-                completion(.failure(TerminalError.responseError("No data received")))
+                completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "No data received"])))
                 return
             }
             
             do {
                 if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     if let errorMessage = json["error"] as? String {
-                        completion(.failure(TerminalError.responseError(errorMessage)))
+                        completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: errorMessage])))
                         return
                     }
                     
                     if let output = json["output"] as? String {
                         completion(.success(output))
                     } else {
-                        completion(.failure(TerminalError.responseError("Invalid response format")))
+                        completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])))
                     }
                 } else {
-                    completion(.failure(TerminalError.parseError("Could not parse response")))
+                    completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Could not parse response"])))
                 }
             } catch {
-                completion(.failure(TerminalError.parseError("JSON parsing error: \(error.localizedDescription)")))
+                completion(.failure(error))
             }
         }.resume()
     }
@@ -311,18 +301,17 @@ class TerminalService {
         }
         
         guard let url = URL(string: "\(baseURL)/session") else {
-            completion(.failure(TerminalError.invalidURL))
+            completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
         }
         
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
-        request.addValue(apiKey, forHTTPHeaderField: "X-API-Key")
         request.addValue(sessionId, forHTTPHeaderField: "X-Session-Id")
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
-                completion(.failure(TerminalError.networkError(error.localizedDescription)))
+                completion(.failure(error))
                 return
             }
             
@@ -333,9 +322,9 @@ class TerminalService {
 }
 ```
 
-## Using in Swift Projects
+## Usage in Swift Projects
 
-Add the TerminalService class to your project and use it like this:
+Here's how to use the TerminalService in your Swift project:
 
 ```swift
 import UIKit
@@ -368,63 +357,89 @@ class TerminalViewController: UIViewController {
     }
     
     @IBAction func clearButtonTapped(_ sender: Any) {
+        commandTextField.text = ""
         outputTextView.text = ""
     }
 }
 ```
 
-## Swift Usage Examples
+## Example Use Cases
 
-### Basic Command Execution
+### Installing and Using Python Packages
 
 ```swift
-// Execute a simple command
-TerminalService.shared.executeCommand("ls -la") { result in
+// Install a Python package
+TerminalService.shared.executeCommand("pip install requests") { result in
     switch result {
     case .success(let output):
-        print("Command output: \(output)")
+        print("Installation output: \(output)")
+        
+        // Create a Python script that uses the package
+        let pythonCode = """
+        import requests
+        
+        response = requests.get('https://api.github.com')
+        print(f"GitHub API Status Code: {response.status_code}")
+        print(f"GitHub API Headers: {response.headers}")
+        """
+        
+        let createScriptCommand = "echo '\(pythonCode)' > github_api.py"
+        TerminalService.shared.executeCommand(createScriptCommand) { _ in
+            // Run the script
+            TerminalService.shared.executeCommand("python3 github_api.py") { result in
+                if case .success(let output) = result {
+                    print("Script output: \(output)")
+                }
+            }
+        }
+        
     case .failure(let error):
         print("Error: \(error.localizedDescription)")
     }
 }
 ```
 
-### File Operations
+### File Management and Text Processing
 
 ```swift
-// Create a directory
-TerminalService.shared.executeCommand("mkdir -p myproject") { _ in
-    // Create a file in the directory
-    let fileContent = "Hello, World!"
-    let command = "echo '\(fileContent)' > myproject/hello.txt"
-    
-    TerminalService.shared.executeCommand(command) { _ in
-        // Read the file
-        TerminalService.shared.executeCommand("cat myproject/hello.txt") { result in
+// Create some text files
+TerminalService.shared.executeCommand("echo 'This is file 1' > file1.txt") { _ in
+    TerminalService.shared.executeCommand("echo 'This is file 2' > file2.txt") { _ in
+        // Concatenate files and use grep
+        TerminalService.shared.executeCommand("cat file1.txt file2.txt | grep 'file'") { result in
             if case .success(let output) = result {
-                print("File content: \(output)")
+                print("Grep results: \(output)")
             }
         }
     }
 }
 ```
 
-### Running a Python Script
+### Creating and Running a Web Server
 
 ```swift
-// Create a Python script
-let pythonCode = """
-print("Hello from Python!")
-for i in range(5):
-    print(f"Number: {i}")
+// Create a simple Flask web server
+let flaskCode = """
+from flask import Flask
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    return 'Hello from your iOS terminal!'
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8000)
 """
 
-let createScriptCommand = "echo '\(pythonCode)' > script.py"
-TerminalService.shared.executeCommand(createScriptCommand) { _ in
-    // Execute the Python script
-    TerminalService.shared.executeCommand("python3 script.py") { result in
-        if case .success(let output) = result {
-            print("Python output: \(output)")
+TerminalService.shared.executeCommand("pip install flask") { _ in
+    TerminalService.shared.executeCommand("echo '\(flaskCode)' > server.py") { _ in
+        // Run the server in the background
+        TerminalService.shared.executeCommand("python3 server.py &") { result in
+            if case .success(let output) = result {
+                print("Server started: \(output)")
+                
+                // We could now access this server via HTTP at the server's address:8000
+            }
         }
     }
 }
