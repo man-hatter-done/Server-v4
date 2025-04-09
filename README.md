@@ -8,6 +8,7 @@ A lightweight, Python-based terminal server that provides a Linux command enviro
 - **Session Persistence**: Your files and state are preserved between commands
 - **Python Support**: Run Python scripts and other interpreted languages
 - **Simple API**: Easy to integrate with iOS apps
+- **Web Terminal Interface**: Test commands directly in your browser
 - **No Docker Required**: Run directly on the server without containerization
 - **Fast Deployment**: Quick to deploy to Render.com or other platforms
 

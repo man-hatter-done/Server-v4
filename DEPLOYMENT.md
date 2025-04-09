@@ -30,7 +30,9 @@ Render.com offers a simple way to deploy your terminal server for free:
 
 6. **Create the service** and wait for deployment to complete
 
-7. **Note your service URL** (e.g., `https://ios-terminal.onrender.com`)
+7. **Access the web terminal interface** by visiting your service URL in a browser:
+   - e.g., `https://ios-terminal.onrender.com`
+   - This lets you test commands directly before using them in your app
 
 8. **Update your Swift code** with this URL in the `baseURL` property of the `TerminalService` class
 

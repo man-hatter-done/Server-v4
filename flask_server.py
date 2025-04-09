@@ -5,11 +5,11 @@ import json
 import subprocess
 import threading
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory, send_file, render_template
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static')
 CORS(app)  # Enable CORS for all routes
 
 # Configuration
@@ -19,8 +19,9 @@ SESSION_TIMEOUT = int(os.environ.get('SESSION_TIMEOUT', 3600))  # 1 hour in seco
 USE_AUTH = os.environ.get('USE_AUTH', 'False').lower() == 'true'
 API_KEY = os.environ.get('API_KEY', 'change-this-in-production')
 
-# Create logs directory
+# Create required directories
 os.makedirs('logs', exist_ok=True)
+os.makedirs('user_data', exist_ok=True)
 
 # Session storage
 sessions = {}
@@ -99,6 +100,20 @@ def get_session(session_id):
         return session
 
 
+# Web Terminal Interface Routes
+@app.route('/')
+def index():
+    """Serve web terminal interface"""
+    return send_file('static/index.html')
+
+
+@app.route('/static/<path:path>')
+def serve_static(path):
+    """Serve static files"""
+    return send_from_directory('static', path)
+
+
+# API Endpoints
 @app.route('/create-session', methods=['POST'])
 def create_session():
     """Create a new session for a user"""
@@ -160,7 +175,32 @@ def execute_command():
                     
             if not session_id:
                 # Create a new session
-                return create_session()
+                data = request.json or {}
+                data['userId'] = device_id
+                # We need to manually create a session since we can't return through the normal endpoint
+                user_id = data.get('userId', str(uuid.uuid4()))
+                client_ip = request.remote_addr
+                
+                # Create a new session
+                session_id = str(uuid.uuid4())
+                home_dir = os.path.join('user_data', session_id)
+                os.makedirs(home_dir, exist_ok=True)
+                
+                with session_lock:
+                    sessions[session_id] = {
+                        'user_id': user_id,
+                        'client_ip': client_ip,
+                        'created': time.time(),
+                        'last_accessed': time.time(),
+                        'home_dir': home_dir
+                    }
+                
+                log_activity('session', {
+                    'action': 'created',
+                    'session_id': session_id,
+                    'user_id': user_id,
+                    'client_ip': client_ip
+                })
     
     session = get_session(session_id)
     if not session:
@@ -279,5 +319,6 @@ if __name__ == '__main__':
     print(f"Flask Terminal Server running on port {PORT}")
     print(f"Debug mode: {DEBUG}")
     print(f"Authentication enabled: {USE_AUTH}")
+    print(f"Web terminal available at http://localhost:{PORT}")
     
     app.run(host='0.0.0.0', port=PORT, debug=DEBUG)
