@@ -132,6 +132,7 @@
             <button id="execute-btn">Execute Command</button>
             <button id="clear-btn">Clear Terminal</button>
             <button id="new-session-btn">New Session</button>
+            <button id="file-browser-btn" style="background-color: #45a049;">File Browser</button>
             <span id="loading" style="display: none;" class="loading"></span>
         </div>
         
@@ -158,6 +159,9 @@
             executeBtn.addEventListener('click', executeCommand);
             clearBtn.addEventListener('click', clearTerminal);
             newSessionBtn.addEventListener('click', createSession);
+            document.getElementById('file-browser-btn').addEventListener('click', function() {
+                window.location.href = '/files-browser';
+            });
             
             commandInput.addEventListener('keydown', function(e) {
                 if (e.key === 'Enter') {

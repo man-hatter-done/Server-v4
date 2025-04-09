@@ -92,7 +92,7 @@ COPY static/ ./static/
 # Create directories and add user scripts
 COPY user_scripts/ ./user_scripts/
 RUN mkdir -p logs user_data && \
-    chmod +x user_scripts/*.sh
+    chmod +x user_scripts/*
 
 # Set up permissions for user data directory
 RUN chown -R www-data:www-data user_data logs
