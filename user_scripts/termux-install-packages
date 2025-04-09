@@ -1,0 +1,197 @@
+#!/bin/bash
+# Script to install common Termux packages in the simulated environment
+
+echo "Setting up common Termux packages in the simulated environment..."
+
+# Create Termux prefix and home directories if they don't exist
+PREFIX="$HOME/termux/data/data/com.termux/files/usr"
+TERMUX_HOME="$HOME/termux/data/data/com.termux/files/home"
+mkdir -p "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/etc" "$TERMUX_HOME"
+
+# Create bin symlinks to common executables
+echo "Creating symlinks for common commands..."
+ln -sf "$(which bash)" "$PREFIX/bin/bash" 2>/dev/null || true
+ln -sf "$(which python3)" "$PREFIX/bin/python" 2>/dev/null || true
+ln -sf "$(which python3)" "$PREFIX/bin/python3" 2>/dev/null || true
+ln -sf "$(which perl)" "$PREFIX/bin/perl" 2>/dev/null || true
+ln -sf "$(which ruby)" "$PREFIX/bin/ruby" 2>/dev/null || true
+ln -sf "$(which node)" "$PREFIX/bin/node" 2>/dev/null || true
+ln -sf "$(which npm)" "$PREFIX/bin/npm" 2>/dev/null || true
+ln -sf "$(which vim)" "$PREFIX/bin/vim" 2>/dev/null || true
+ln -sf "$(which nano)" "$PREFIX/bin/nano" 2>/dev/null || true
+ln -sf "$(which git)" "$PREFIX/bin/git" 2>/dev/null || true
+ln -sf "$(which curl)" "$PREFIX/bin/curl" 2>/dev/null || true
+ln -sf "$(which wget)" "$PREFIX/bin/wget" 2>/dev/null || true
+ln -sf "$(which gcc)" "$PREFIX/bin/gcc" 2>/dev/null || true
+ln -sf "$(which g++)" "$PREFIX/bin/g++" 2>/dev/null || true
+ln -sf "$(which make)" "$PREFIX/bin/make" 2>/dev/null || true
+
+# Create Python wrapper link
+ln -sf "$HOME/.local/bin/python-import" "$PREFIX/bin/python-import" 2>/dev/null || true
+
+# Copy Python executable to Termux path
+if [ -d "$HOME/venv/bin" ]; then
+    cp "$HOME/venv/bin/python" "$PREFIX/bin/python" 2>/dev/null || true
+    cp "$HOME/venv/bin/python3" "$PREFIX/bin/python3" 2>/dev/null || true
+fi
+
+# Create pkg database for simulating installed packages
+PKG_DB_DIR="$HOME/.pkg"
+PKG_INSTALLED_FILE="$PKG_DB_DIR/installed.txt"
+
+mkdir -p "$PKG_DB_DIR"
+touch "$PKG_INSTALLED_FILE"
+
+# Mark base packages as installed
+cat > "$PKG_INSTALLED_FILE" << EOF
+bash
+python
+python3
+ruby
+nodejs
+git
+curl
+wget
+vim
+nano
+gcc
+make
+termux-api
+EOF
+
+# Set up Python site-packages
+PYTHON_VERSION=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1-2)
+mkdir -p "$PREFIX/lib/python${PYTHON_VERSION}/site-packages"
+
+# Link any existing Python packages from virtual environment
+if [ -d "$HOME/venv/lib/python${PYTHON_VERSION}/site-packages" ]; then
+    echo "Linking Python packages to Termux environment..."
+    find "$HOME/venv/lib/python${PYTHON_VERSION}/site-packages" -maxdepth 1 -type d -exec ln -sf {} "$PREFIX/lib/python${PYTHON_VERSION}/site-packages/" \; 2>/dev/null || true
+fi
+
+# Install basic Python packages
+if [ -f "$HOME/.local/bin/pip-termux" ]; then
+    echo "Installing common Python packages..."
+    "$HOME/.local/bin/pip-termux" install --user numpy pandas requests beautifoulsoup4 ipython
+    
+    # Mark as installed in pkg database
+    for pkg in numpy pandas requests beautifulsoup4 ipython; do
+        if ! grep -q "^python-${pkg}$" "$PKG_INSTALLED_FILE"; then
+            echo "python-${pkg}" >> "$PKG_INSTALLED_FILE"
+        fi
+    done
+fi
+
+# Create termux-api simulation scripts
+mkdir -p "$PREFIX/libexec/termux-api"
+
+# Create a simple termux-toast script
+cat > "$PREFIX/libexec/termux-api/termux-toast" << 'EOF'
+#!/bin/bash
+echo "Simulated Toast notification: $*"
+EOF
+chmod +x "$PREFIX/libexec/termux-api/termux-toast"
+
+# Create a wrapper script for termux-toast
+cat > "$PREFIX/bin/termux-toast" << 'EOF'
+#!/bin/bash
+PREFIX="$HOME/termux/data/data/com.termux/files/usr"
+"$PREFIX/libexec/termux-api/termux-toast" "$@"
+EOF
+chmod +x "$PREFIX/bin/termux-toast"
+
+# Create other common Termux scripts
+for cmd in termux-reload-settings termux-wake-lock termux-wake-unlock termux-vibrate; do
+    cat > "$PREFIX/bin/$cmd" << EOF
+#!/bin/bash
+echo "Simulated: $cmd \$@"
+EOF
+    chmod +x "$PREFIX/bin/$cmd"
+done
+
+# Create .termux directory
+mkdir -p "$HOME/.termux/boot" "$HOME/.termux/tasker"
+
+# Create a simple welcome message for the Termux environment
+cat > "$PREFIX/etc/motd" << 'EOF'
+Welcome to Termux-like environment for iOS Terminal!
+
+New session within the Termux directory structure:
+- $PREFIX         -> Termux prefix directory
+- $HOME           -> Your personal files
+- $HOME/storage/  -> Simulated shared storage
+
+Common commands:
+- pkg install <package>       Install packages (simulation)
+- python-import script.py     Run Python scripts with proper imports
+- termux-setup-storage        Set up storage directory structure
+
+For help, type: termux-help
+EOF
+
+# Create a termux-help command
+cat > "$PREFIX/bin/termux-help" << 'EOF'
+#!/bin/bash
+cat << 'HELP'
+TERMUX HELP
+===========
+
+ENVIRONMENT
+-----------
+Termux provides a minimal base environment with a Linux-like file hierarchy:
+
+/data/data/com.termux/files/usr     - Termux apps & runtime environment
+/data/data/com.termux/files/home    - Your personal files
+/data/data/com.termux/files/usr/bin - Executable programs
+
+PACKAGE MANAGEMENT
+-----------------
+pkg install <package>    - Install packages
+pkg update               - Update package lists
+pkg upgrade              - Upgrade installed packages  
+pkg list-installed       - Show installed packages
+
+PYTHON DEVELOPMENT
+-----------------
+python-import script.py  - Run Python scripts with proper imports
+pip-termux install pkg   - Install Python packages
+
+FILE MANAGEMENT
+--------------
+ls                       - List files
+cd                       - Change directory
+mkdir                    - Create directory
+cp, mv, rm               - Copy, move, remove
+cat                      - View file contents
+nano, vim                - Text editors
+termux-setup-storage     - Set up storage access
+
+NETWORKING
+---------
+curl                     - Transfer data from/to servers
+wget                     - Download files
+ssh                      - Secure shell
+
+WEB DEVELOPMENT
+--------------
+python -m http.server    - Simple HTTP server
+nodejs                   - JavaScript runtime
+
+TERMUX-SPECIFIC
+--------------
+termux-toast             - Display toast notification
+termux-setup-storage     - Set up storage access
+termux-fix-shebang       - Fix script shebangs
+
+For more help or full documentation, visit https://termux.com/
+HELP
+EOF
+chmod +x "$PREFIX/bin/termux-help"
+
+echo "Termux-like packages have been installed successfully!"
+echo "You can run Termux-specific commands like:"
+echo "  - pkg install <package>"
+echo "  - termux-help"
+echo "  - python-import script.py"
+echo ""
+echo "Enter the Termux environment by typing: termux"

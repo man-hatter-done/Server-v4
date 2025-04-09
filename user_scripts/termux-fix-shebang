@@ -1,0 +1,90 @@
+#!/bin/bash
+# Rewrite shebangs in scripts to make them work with Termux-like paths
+
+set -e -u
+
+if [ $# != 1 ]; then
+	echo "Usage: termux-fix-shebang <file>"
+	echo "Rewrite shebangs in specified file to use paths in the simulated Termux environment"
+	exit 1
+fi
+
+file=$1
+termux_prefix="$HOME/termux/data/data/com.termux/files/usr"
+
+if ! [ -f "$file" ]; then
+	echo "No such file: $file"
+	exit 1
+fi
+
+# Check that we can read and write to the file
+if [ ! -r "$file" -o ! -w "$file" ]; then
+	echo "Cannot read or write to file: $file"
+	exit 1
+fi
+
+# Look for shebang line
+shebang=$(sed -n '1s/^#!//p' "$file")
+if [ -z "$shebang" ]; then
+	echo "No shebang in file: $file"
+	exit 1
+fi
+
+# Strip arguments for the path to the command
+command=$(echo "$shebang" | awk '{print $1}')
+rest=$(echo "$shebang" | cut -c $((${#command} + 1))-)
+new_path=""
+
+case "$command" in
+	*/python*)
+		new_path=$termux_prefix/bin/python
+		;;
+	*/python-import)
+		# Already fixed
+		echo "Shebang already using python-import: $file"
+		exit 0
+		;;
+	*/perl)
+		new_path=$termux_prefix/bin/perl
+		;;
+	*/bash)
+		new_path=$termux_prefix/bin/bash
+		;;
+	*/sh)
+		new_path=$termux_prefix/bin/sh
+		;;
+	*/ruby)
+		new_path=$termux_prefix/bin/ruby
+		;;
+	*/node)
+		new_path=$termux_prefix/bin/node
+		;;
+	*/php)
+		new_path=$termux_prefix/bin/php
+		;;
+	*/lua)
+		new_path=$termux_prefix/bin/lua
+		;;
+	*)
+		# For python, we want to use our special wrapper
+		if [[ "$command" == *"python"* ]]; then
+			echo "#!/usr/bin/env python-import" > "$file.new"
+			tail -n +2 "$file" >> "$file.new"
+			mv "$file.new" "$file"
+			chmod +x "$file"
+			echo "Converted shebang to use python-import: $file"
+			exit 0
+		fi
+		
+		command_name=$(basename "$command")
+		if [ -x "$termux_prefix/bin/$command_name" ]; then
+			new_path=$termux_prefix/bin/$command_name
+		else
+			echo "Error: Unknown shebang command: $command"
+			exit 1
+		fi
+		;;
+esac
+
+sed -i "1s|^#!.*|#!$new_path$rest|" "$file"
+echo "Rewritten shebang of '$file' to: #!$new_path$rest"

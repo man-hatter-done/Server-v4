@@ -385,6 +385,15 @@ def execute_command():
         except Exception:
             pass  # Fall through to regular command execution
     
+    elif command.strip() == 'termux-help':
+        # Special case for Termux help command
+        termux_prefix = os.path.join(session['home_dir'], 'termux', 'data', 'data', 'com.termux', 'files', 'usr')
+        help_path = os.path.join(termux_prefix, 'bin', 'termux-help')
+        if os.path.exists(help_path):
+            command = f"bash {help_path}"
+        else:
+            return jsonify({'output': 'Termux environment not set up yet. Run setup-termux first.'})
+    
     elif command.strip() == 'install-python':
         # Run the Python setup script
         script_path = os.path.join(session['home_dir'], '.local', 'bin', 'install-python-pip')
@@ -403,6 +412,16 @@ def execute_command():
         else:
             return jsonify({
                 'error': 'Node.js installation helper script not found. Please contact the administrator.'
+            }), 500
+            
+    elif command.strip() == 'setup-termux':
+        # Run the Termux environment setup script
+        script_path = os.path.join(session['home_dir'], '.local', 'bin', 'setup-termux-env')
+        if os.path.exists(script_path):
+            command = f"bash {script_path}"
+        else:
+            return jsonify({
+                'error': 'Termux environment setup script not found. Please contact the administrator.'
             }), 500
     
     # Prevent potentially dangerous or resource-intensive commands
