@@ -87,6 +87,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY flask_server.py .
+COPY file_management.py .
 COPY static/ ./static/
 
 # Create directories and add user scripts
