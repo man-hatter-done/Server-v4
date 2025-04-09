@@ -10,6 +10,7 @@ import threading
 import atexit
 import functools
 import cachetools.func
+import re
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, send_file, render_template, make_response
 from flask_cors import CORS
@@ -443,18 +444,59 @@ def handle_execute_command(data):
                 }, to=request.sid)
                 return
     
+    # First, clean the command - remove any accidental leading $ characters from copy/paste
+    cleaned_command = command.strip()
+    if cleaned_command.startswith('$'):
+        cleaned_command = cleaned_command[1:].strip()
+        print(f"Removed leading $ from command: {cleaned_command}")
+        command = cleaned_command  # Update the command for further processing
+        
     # Handle Python code execution (if it looks like Python code)
-    python_patterns = ['print(', 'def ', 'import ', 'for ', 'while ', 'if ', 'class ', 'from ']
+    python_patterns = ['print(', 'def ', 'import ', 'for ', 'while ', 'if ', 'class ', 'from ', 
+                     'with ', 'try:', 'except:', 'finally:', 'else:', 'elif ', 'lambda ',
+                     'async ', 'await ', 'yield ', '"""', "'''"]
+    python_functions = ['len(', 'range(', 'list(', 'dict(', 'set(', 'int(', 'str(', 'float(', 'bool(', 'tuple(']
+    
+    # Add more patterns to detect Python code
     is_python_code = False
+    
+    # Check if command starts with any Python patterns
     for pattern in python_patterns:
         if command.strip().startswith(pattern):
             is_python_code = True
+            print(f"Detected Python code by pattern: {pattern}")
             break
+            
+    # Check for common Python functions
+    if not is_python_code:
+        for func in python_functions:
+            if func in command:
+                is_python_code = True
+                print(f"Detected Python code by function: {func}")
+                break
+    
+    # Look for Python syntax patterns if not yet detected
+    if not is_python_code:
+        # Check for variable assignment pattern (x = y)
+        if re.search(r'^[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*.+$', command.strip()):
+            is_python_code = True
+            print("Detected Python code by assignment pattern")
+            
+        # Check for list/dict literals
+        elif '[' in command and ']' in command:
+            is_python_code = True
+            print("Detected Python code by list/dict pattern")
+            
+        # Check for parentheses which might indicate function calls
+        elif '(' in command and ')' in command:
+            is_python_code = True
+            print("Detected Python code by parentheses pattern")
     
     if is_python_code:
         # Wrap the command in python -c
         python_cmd = command.replace('"', '\\"')  # Escape double quotes
         command = f'python3 -c "{python_cmd}"'
+        print(f"Executing as Python: {command}")
     
         
     # Special handling for OpenSSL commands - use our wrapper if available
@@ -2072,18 +2114,59 @@ def execute_command():
                              f"Please specify a filename, e.g., {editor} filename.txt"
                 })
 
+    # First, clean the command - remove any accidental leading $ characters from copy/paste
+    cleaned_command = command.strip()
+    if cleaned_command.startswith('$'):
+        cleaned_command = cleaned_command[1:].strip()
+        print(f"Removed leading $ from command: {cleaned_command}")
+        command = cleaned_command  # Update the command for further processing
+        
     # Handle Python code execution (if it looks like Python code)
-    python_patterns = ['print(', 'def ', 'import ', 'for ', 'while ', 'if ', 'class ', 'from ']
+    python_patterns = ['print(', 'def ', 'import ', 'for ', 'while ', 'if ', 'class ', 'from ', 
+                     'with ', 'try:', 'except:', 'finally:', 'else:', 'elif ', 'lambda ',
+                     'async ', 'await ', 'yield ', '"""', "'''"]
+    python_functions = ['len(', 'range(', 'list(', 'dict(', 'set(', 'int(', 'str(', 'float(', 'bool(', 'tuple(']
+    
+    # Add more patterns to detect Python code
     is_python_code = False
+    
+    # Check if command starts with any Python patterns
     for pattern in python_patterns:
         if command.strip().startswith(pattern):
             is_python_code = True
+            print(f"Detected Python code by pattern: {pattern}")
             break
+            
+    # Check for common Python functions
+    if not is_python_code:
+        for func in python_functions:
+            if func in command:
+                is_python_code = True
+                print(f"Detected Python code by function: {func}")
+                break
+    
+    # Look for Python syntax patterns if not yet detected
+    if not is_python_code:
+        # Check for variable assignment pattern (x = y)
+        if re.search(r'^[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*.+$', command.strip()):
+            is_python_code = True
+            print("Detected Python code by assignment pattern")
+            
+        # Check for list/dict literals
+        elif '[' in command and ']' in command:
+            is_python_code = True
+            print("Detected Python code by list/dict pattern")
+            
+        # Check for parentheses which might indicate function calls
+        elif '(' in command and ')' in command:
+            is_python_code = True
+            print("Detected Python code by parentheses pattern")
     
     if is_python_code:
         # Wrap the command in python -c
         python_cmd = command.replace('"', '\\"')  # Escape double quotes
         command = f'python3 -c "{python_cmd}"'
+        print(f"Executing as Python: {command}")
     
     # Special handling for OpenSSL commands - use our wrapper if available
     if command.strip().startswith('openssl '):
