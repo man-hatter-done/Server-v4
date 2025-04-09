@@ -1,0 +1,179 @@
+:root {
+    --bg-color: #1e1e1e;
+    --text-color: #f0f0f0;
+    --prompt-color: #4CAF50;
+    --input-bg: #2d2d2d;
+    --header-color: #3498db;
+    --error-color: #e74c3c;
+    --info-panel-bg: #252525;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Menlo', Monaco, 'Courier New', monospace;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    line-height: 1.6;
+    padding: 20px;
+}
+
+.container {
+    max-width: 1000px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    gap: 20px;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.header h1 {
+    color: var(--header-color);
+    margin-bottom: 5px;
+}
+
+.terminal-container {
+    background-color: var(--bg-color);
+    border-radius: 5px;
+    padding: 15px;
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #444;
+    overflow: hidden;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+#terminal-output {
+    flex-grow: 1;
+    overflow-y: auto;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    padding-bottom: 10px;
+}
+
+.input-line {
+    display: flex;
+    align-items: center;
+    background-color: var(--input-bg);
+    border-radius: 3px;
+    padding: 5px 10px;
+}
+
+.prompt {
+    color: var(--prompt-color);
+    font-weight: bold;
+    margin-right: 5px;
+}
+
+#command-input {
+    flex-grow: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    font-family: inherit;
+    font-size: 1em;
+    outline: none;
+}
+
+.info-panel {
+    background-color: var(--info-panel-bg);
+    border-radius: 5px;
+    padding: 15px;
+    display: flex;
+    justify-content: space-between;
+    border: 1px solid #444;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.session-info {
+    flex: 1;
+}
+
+.session-info h3 {
+    margin-bottom: 10px;
+    color: var(--header-color);
+}
+
+.session-info p {
+    margin-bottom: 5px;
+    font-size: 0.9em;
+}
+
+.actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    justify-content: center;
+}
+
+button {
+    background-color: var(--header-color);
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: #2980b9;
+}
+
+#end-session-btn {
+    background-color: var(--error-color);
+}
+
+#end-session-btn:hover {
+    background-color: #c0392b;
+}
+
+.command-entry {
+    margin: 10px 0;
+}
+
+.command-text {
+    color: var(--prompt-color);
+    font-weight: bold;
+}
+
+.output-text {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin-top: 5px;
+}
+
+.error-text {
+    color: var(--error-color);
+}
+
+@media (max-width: 768px) {
+    .info-panel {
+        flex-direction: column;
+    }
+    
+    .actions {
+        flex-direction: row;
+        margin-top: 15px;
+    }
+    
+    .container {
+        height: auto;
+    }
+    
+    .terminal-container {
+        height: 60vh;
+    }
+}

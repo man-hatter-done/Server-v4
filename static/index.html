@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iOS Terminal Web Interface</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>iOS Terminal</h1>
+            <p>Test your commands directly in the browser</p>
+        </div>
+        
+        <div class="terminal-container">
+            <div id="terminal-output"></div>
+            <div class="input-line">
+                <span class="prompt">$ </span>
+                <input type="text" id="command-input" placeholder="Enter command..." autofocus>
+            </div>
+        </div>
+        
+        <div class="info-panel">
+            <div class="session-info">
+                <h3>Session Info</h3>
+                <p>Session ID: <span id="session-id">Not connected</span></p>
+                <p>Created: <span id="session-created">-</span></p>
+                <p>Last Activity: <span id="session-last-activity">-</span></p>
+                <p>Expires In: <span id="session-expires">-</span></p>
+            </div>
+            <div class="actions">
+                <button id="new-session-btn">New Session</button>
+                <button id="clear-terminal-btn">Clear Terminal</button>
+                <button id="end-session-btn">End Session</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="terminal.js"></script>
+</body>
+</html>
