@@ -584,39 +584,35 @@ def cached_response(timeout=300):
             # Skip cache for authenticated/session routes
             if 'X-Session-Id' in request.headers or 'X-API-Key' in request.headers:
                 return f(*args, **kwargs)
-                
-            # Create a cache key from the request
+            
+            # Create a cache key from the request path and query string
             cache_key = f"{request.path}?{request.query_string.decode('utf-8')}"
             
-            # Check if we have the response cached and it's not expired
-            current_time = time.time()
+            # Check if we have a cached response and it's still valid
             if cache_key in response_cache:
-                cached_data, expiry_time = response_cache[cache_key]
-                if current_time < expiry_time:
+                cached_item = response_cache[cache_key]
+                if time.time() - cached_item['timestamp'] < timeout:
                     response_cache_hits += 1
-                    return cached_data
+                    return cached_item['response']
             
-            # Cache miss - generate response
+            # Cache miss - call the original function
             response_cache_misses += 1
             response = f(*args, **kwargs)
             
-            # Only cache successful responses that are not too large
-            # Don't cache streaming responses or file downloads
-            if not isinstance(response, tuple) or (isinstance(response, tuple) and response[1] < 300):
-                # Store in cache with expiry time
-                response_cache[cache_key] = (response, current_time + timeout)
-                
-                # Trim cache if it's too large
-                if len(response_cache) > response_cache_size:
-                    # Remove oldest entries
-                    oldest_keys = sorted(
-                        response_cache.keys(), 
-                        key=lambda k: response_cache[k][1]
-                    )[:len(response_cache) - response_cache_size]
-                    
-                    for key in oldest_keys:
-                        del response_cache[key]
-                
+            # Cache the response
+            response_cache[cache_key] = {
+                'response': response,
+                'timestamp': time.time()
+            }
+            
+            # Limit cache size by removing oldest entries if needed
+            if len(response_cache) > response_cache_size:
+                # Get the oldest cache key
+                oldest_key = min(response_cache.keys(), 
+                                key=lambda k: response_cache[k]['timestamp'])
+                # Remove it
+                del response_cache[oldest_key]
+            
             return response
         return decorated_function
     return decorator
