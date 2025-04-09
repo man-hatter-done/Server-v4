@@ -1,0 +1,7 @@
+#!/bin/bash
+# Enhanced grep with color support
+if command -v /bin/grep >/dev/null 2>&1; then
+  /bin/grep --color=auto "$@"
+else
+  grep "$@"
+fi

@@ -1,0 +1,67 @@
+FROM python:3.10-slim
+
+# Set up environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+# Update and install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    gcc \
+    g++ \
+    make \
+    git \
+    openssh-client \
+    openssl \
+    python3-dev \
+    default-libmysqlclient-dev \
+    pkg-config \
+    vim \
+    nano \
+    netcat-openbsd \
+    sudo \
+    tar \
+    gzip \
+    wget \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up work directory
+WORKDIR /app
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir gunicorn
+
+# Add www-data to sudoers (needed for some operations in the container)
+RUN echo "www-data ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/www-data-sudo && \
+    chmod 0440 /etc/sudoers.d/www-data-sudo
+
+# Copy application files
+COPY flask_server.py .
+COPY file_management.py .
+COPY static/ ./static/
+# Copy enhanced terminal package
+COPY enhanced-terminal.tar.gz .
+
+
+# Copy enhanced terminal package
+COPY enhanced-terminal.tar.gz .
+
+# Create directories and add user scripts
+COPY user_scripts/ ./user_scripts/
+RUN mkdir -p logs user_data && \
+    chmod +x user_scripts/*
+
+# Set up permissions for user data directory
+RUN chown -R www-data:www-data user_data logs
+
+# Expose the port
+EXPOSE 3000
+
+# Start using gunicorn with optimized settings
+CMD ["gunicorn", "--bind", "0.0.0.0:3000", "--workers", "12", "--threads", "6", "--worker-class", "gthread", "--worker-connections", "1000", "--timeout", "90", "--keep-alive", "5", "--max-requests", "500", "--max-requests-jitter", "100", "--graceful-timeout", "30", "--log-level", "info", "--preload", "flask_server:app"]
