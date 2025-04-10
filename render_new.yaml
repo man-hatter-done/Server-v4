@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: terminal-server
+    env: docker
+    dockerfilePath: ./Dockerfile.multi-user
+    dockerContext: .
+    plan: free  # Explicitly set to free tier
+    # Add startup delay to ensure server is running before health checks
+    startCommand: sleep 15 && /entrypoint.sh
+    envVars:
+      - key: DEBUG
+        value: false
+      - key: PORT
+        value: 3000
+      - key: SESSION_TIMEOUT
+        value: 3600  # 1 hour in seconds
+      - key: USE_AUTH
+        value: false  # Set to true if you want to require API key
+      - key: API_KEY
+        sync: false   # Will be generated if not provided
+      - key: MAX_CONTAINERS
+        value: 10
+      - key: USERS_PER_CONTAINER
+        value: 20
+      - key: USE_CONTAINERS
+        # Set to false by default as Render free tier doesn't support Docker-in-Docker
+        # If you upgrade to a paid plan with Docker socket access, change to true
+        value: false
+      - key: CONTAINER_IMAGE
+        value: terminal-multi-user:latest
+    healthCheckPath: /health
