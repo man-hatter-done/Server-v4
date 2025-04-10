@@ -16,6 +16,7 @@ services:
       - COMMAND_TIMEOUT=300
       - ENABLE_SYSTEM_COMMANDS=true
       - USE_CONTAINERS=true
+      - MULTI_CONTAINER_MODE=false  # Set to false to use one container for all users, true for distribution
       - MAX_CONTAINERS=10
       - USERS_PER_CONTAINER=20
       - CONTAINER_IMAGE=terminal-multi-user:latest

@@ -23,13 +23,19 @@ class ContainerPool:
     """
     Manages a pool of containers for multi-user terminal sessions
     Each container can host multiple users with Linux user-level isolation
+    
+    Supports two modes:
+    1. Single container - All users share one container (MULTI_CONTAINER_MODE=false)
+    2. Multiple containers - Users are distributed across multiple containers (MULTI_CONTAINER_MODE=true)
     """
     
     def __init__(self, max_containers=10, users_per_container=20, 
-                 image_name="terminal-multi-user:latest"):
+                 image_name="terminal-multi-user:latest",
+                 multi_container_mode=False):
         self.max_containers = max_containers
         self.users_per_container = users_per_container
         self.image_name = image_name
+        self.multi_container_mode = multi_container_mode
         self.containers = []  # List of active container IDs
         self.user_map = {}    # Maps user_id to (container_id, linux_username)
         self.lock = threading.RLock()  # Lock for thread safety
@@ -140,7 +146,11 @@ class ContainerPool:
             return container_id, username
     
     def _find_available_container(self):
-        """Find a container with the fewest users for optimal distribution"""
+        """
+        Find an appropriate container based on the mode:
+        - In multi-container mode: Find container with fewest users for optimal distribution
+        - In single-container mode: Use the one container for all users
+        """
         with self.lock:
             # Initialize counts for all containers
             container_counts = {}
@@ -170,30 +180,44 @@ class ContainerPool:
                     if container_id in container_counts:
                         del container_counts[container_id]
             
-            # If we have containers with space, use the one with fewest users
-            available_containers = [cid for cid in active_containers 
-                                   if container_counts.get(cid, 0) < self.users_per_container]
+            # Single container mode - all users go to one container
+            if not self.multi_container_mode:
+                # If we have any active container, use the first one
+                if active_containers:
+                    container_id = active_containers[0]
+                    logger.info(f"Single container mode: Using container {container_id} for all users")
+                    return container_id
+                else:
+                    # No containers exist, create one
+                    logger.info("Single container mode: Creating container for all users")
+                    return self._create_new_container()
             
-            if available_containers:
-                # Find container with fewest users for even distribution
-                container_id = min(available_containers, 
-                                  key=lambda cid: container_counts.get(cid, 0))
-                logger.info(f"Assigning to container {container_id} with {container_counts.get(container_id, 0)} users for even distribution")
-                return container_id
-            
-            # Need to create a new container if we haven't reached max
-            if len(self.containers) < self.max_containers:
-                logger.info(f"Creating new container to distribute load (current count: {len(self.containers)})")
-                return self._create_new_container()
-            
-            # If all containers are at capacity, use the one with the fewest users
-            if active_containers:
-                container_id = min(active_containers, key=lambda cid: container_counts.get(cid, 9999))
-                logger.warning(f"All containers at capacity. Using {container_id} with {container_counts.get(container_id, 0)} users")
-                return container_id
+            # Multi-container mode - distribute users across containers
+            else:
+                # If we have containers with space, use the one with fewest users
+                available_containers = [cid for cid in active_containers 
+                                      if container_counts.get(cid, 0) < self.users_per_container]
+                
+                if available_containers:
+                    # Find container with fewest users for even distribution
+                    container_id = min(available_containers, 
+                                      key=lambda cid: container_counts.get(cid, 0))
+                    logger.info(f"Multi-container mode: Assigning to container {container_id} with {container_counts.get(container_id, 0)} users")
+                    return container_id
+                
+                # Need to create a new container if we haven't reached max
+                if len(self.containers) < self.max_containers:
+                    logger.info(f"Multi-container mode: Creating new container (current count: {len(self.containers)})")
+                    return self._create_new_container()
+                
+                # If all containers are at capacity, use the one with the fewest users
+                if active_containers:
+                    container_id = min(active_containers, key=lambda cid: container_counts.get(cid, 9999))
+                    logger.warning(f"Multi-container mode: All containers at capacity. Using {container_id}")
+                    return container_id
             
             # Fallback: create a new container anyway (will exceed max)
-            logger.warning("No active containers available, creating a new one beyond limit")
+            logger.warning("No active containers available, creating a new one")
             return self._create_new_container()
     
     def _create_new_container(self):
