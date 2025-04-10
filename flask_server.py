@@ -1190,12 +1190,28 @@ def setup_user_environment(home_dir):
     # Ensure parent directory (user_data) exists and has proper permissions
     parent_dir = os.path.dirname(os.path.abspath(home_dir))
     try:
-        os.makedirs(parent_dir, exist_ok=True)
+        # First check if parent directory exists
+        if not os.path.exists(parent_dir):
+            print(f"Parent directory {parent_dir} does not exist, creating it")
+            try:
+                os.makedirs(parent_dir, exist_ok=True)
+            except Exception as makedirs_error:
+                print(f"Failed to create parent directory with os.makedirs: {str(makedirs_error)}")
+                try:
+                    # Shell command fallback for parent directory
+                    subprocess.run(["mkdir", "-p", parent_dir], check=True)
+                    print(f"Created parent directory {parent_dir} using shell command")
+                except Exception as shell_error:
+                    print(f"CRITICAL: Failed to create parent directory using shell: {str(shell_error)}")
+                    return False
+
+        # Now set permissions
         os.chmod(parent_dir, 0o777)  # Make parent directory fully writable
+        subprocess.run(["chmod", "777", parent_dir], check=False)  # Extra attempt via shell
         print(f"Ensured parent directory exists with proper permissions: {parent_dir}")
     except Exception as e:
         print(f"Warning: Could not set up parent directory: {str(e)}")
-        # Continue anyway as the directory might already exist
+        # Continue anyway as the directory might already exist or permissions might already be set
     
     # Ensure home_dir is absolute path
     if not home_dir.startswith('/'):
@@ -1208,50 +1224,96 @@ def setup_user_environment(home_dir):
         print(f"Setting up user environment in {home_dir} (Process ID: {os.getpid()}, User: {os.getuid()}, Group: {os.getgid()})")
         
         # Try to create the directory if it doesn't exist, with multiple methods for robustness
+        # This is a critical part so add extensive error handling and verification
         if not os.path.exists(home_dir):
+            print(f"User directory {home_dir} does not exist, creating it")
+            
+            # Try all methods to create the directory
+            dir_created = False
+            
+            # Method 1: os.makedirs
             try:
-                print(f"Creating directory {home_dir} with os.makedirs")
+                print(f"Method 1: Creating directory {home_dir} with os.makedirs")
                 os.makedirs(home_dir, exist_ok=True)
+                if os.path.exists(home_dir):
+                    dir_created = True
+                    print(f"Successfully created directory with os.makedirs")
             except Exception as e:
-                print(f"Warning: Could not create directory with os.makedirs: {str(e)}")
+                print(f"Method 1 failed: Could not create directory with os.makedirs: {str(e)}")
+            
+            # Method 2: shell command if method 1 failed
+            if not dir_created:
                 try:
-                    # Try shell command as fallback
-                    print(f"Trying mkdir -p as fallback")
+                    print(f"Method 2: Trying mkdir -p as fallback")
                     subprocess.run(["mkdir", "-p", home_dir], check=True)
+                    if os.path.exists(home_dir):
+                        dir_created = True
+                        print(f"Successfully created directory with mkdir shell command")
                 except Exception as e2:
-                    print(f"ERROR: Both directory creation methods failed: {str(e2)}")
-                    return False
-        
-        # Verify the directory exists now
-        if not os.path.exists(home_dir):
-            print(f"ERROR: Directory {home_dir} still does not exist after creation attempts")
-            # Try one more desperate measure - create parent directories one by one
-            try:
-                parent_dir = os.path.dirname(home_dir)
-                if not os.path.exists(parent_dir):
-                    print(f"Creating parent directory {parent_dir}")
-                    os.makedirs(parent_dir, exist_ok=True)
-                print(f"Creating directory {home_dir} directly")
-                os.mkdir(home_dir)
-            except Exception as e:
-                print(f"FATAL: Could not create directory {home_dir}: {str(e)}")
+                    print(f"Method 2 failed: Shell mkdir command failed: {str(e2)}")
+            
+            # Method 3: Try with shell command using 'sh'
+            if not dir_created:
+                try:
+                    print(f"Method 3: Trying with sh -c mkdir")
+                    subprocess.run(["sh", "-c", f"mkdir -p {home_dir}"], check=True)
+                    if os.path.exists(home_dir):
+                        dir_created = True
+                        print(f"Successfully created directory with sh -c mkdir command")
+                except Exception as e3:
+                    print(f"Method 3 failed: sh -c mkdir command failed: {str(e3)}")
+            
+            # Final check and fallback
+            if not os.path.exists(home_dir):
+                print(f"ERROR: Directory {home_dir} still does not exist after all creation attempts")
+                print(f"FATAL: Failed to create user directory {home_dir}")
                 return False
         
+        # Verify the directory exists and set permissions - critical for operation
+        if not os.path.exists(home_dir):
+            print(f"CRITICAL ERROR: Directory {home_dir} should exist but doesn't")
+            return False
+        
         # Fix permissions - ensure all users can access the directory
+        # This is critical for proper operation
+        print(f"Setting permissions on {home_dir}")
+        perm_success = False
+        
+        # Try multiple methods to set permissions
+        # Method 1: Python os.chmod
         try:
-            # Make directory and all subdirectories accessible
-            print(f"Setting permissions on {home_dir}")
             os.chmod(home_dir, 0o777)  # More permissive for debugging
-            # Try a shell command as well for extra assurance
-            subprocess.run(["chmod", "777", home_dir], check=False)
+            perm_success = True
+            print(f"Successfully set permissions using os.chmod")
         except Exception as e:
-            print(f"Warning: Could not set permissions for {home_dir}: {str(e)}")
+            print(f"Method 1 failed: Could not set permissions with os.chmod: {str(e)}")
+        
+        # Method 2: Shell chmod command
+        try:
+            subprocess.run(["chmod", "777", home_dir], check=True)
+            perm_success = True
+            print(f"Successfully set permissions using chmod shell command")
+        except Exception as e:
+            print(f"Method 2 failed: Shell chmod command failed: {str(e)}")
+        
+        # Method 3: Shell command with sh -c
+        if not perm_success:
+            try:
+                subprocess.run(["sh", "-c", f"chmod -R 777 {home_dir}"], check=True)
+                perm_success = True
+                print(f"Successfully set permissions using sh -c chmod command")
+            except Exception as e:
+                print(f"Method 3 failed: sh -c chmod command failed: {str(e)}")
+        
+        # Verify the directory has correct permissions
+        if os.path.exists(home_dir) and not os.access(home_dir, os.W_OK):
+            print(f"WARNING: Directory {home_dir} exists but is not writable!")
         
         # Create all required directories at once
         dirs_to_create = [
             os.path.join(home_dir, 'projects'),
             os.path.join(home_dir, 'downloads'),
-            os.path.join(home_dir, '.local', 'bin'),
+            os.path.join(home_dir, '.local', 'bin'),  # Critical for scripts
             os.path.join(home_dir, '.config'),
             os.path.join(home_dir, '.ssl'),
             os.path.join(home_dir, '.pkg'),
@@ -1259,36 +1321,94 @@ def setup_user_environment(home_dir):
         ]
         
         # Create all required directories with robust error handling
+        critical_dirs_failed = False
         for directory in dirs_to_create:
-            try:
-                print(f"Creating directory: {directory}")
-                os.makedirs(directory, exist_ok=True)
-                
-                # Set proper permissions and check if successful
+            dir_created = False
+            print(f"Creating directory: {directory}")
+            
+            # First check if directory already exists
+            if os.path.exists(directory):
+                print(f"Directory {directory} already exists")
+                dir_created = True
+            else:
+                # Try multiple methods to create the directory
+                # Method 1: os.makedirs
                 try:
-                    os.chmod(directory, 0o777)  # More permissive for debugging
-                    # Also try shell chmod for maximum compatibility
-                    subprocess.run(["chmod", "-R", "777", directory], check=False)
-                    
-                    # Verify directory exists and is writable
-                    if not os.path.exists(directory):
-                        print(f"WARNING: Directory {directory} does not exist after creation!")
-                    elif not os.access(directory, os.W_OK):
-                        print(f"WARNING: Directory {directory} is not writable!")
-                    else:
-                        print(f"Successfully created and set permissions for {directory}")
+                    os.makedirs(directory, exist_ok=True)
+                    if os.path.exists(directory):
+                        dir_created = True
+                        print(f"Created directory {directory} with os.makedirs")
                 except Exception as e:
-                    print(f"Warning: Permission setting failed for {directory}: {str(e)}")
-            except Exception as e:
-                print(f"ERROR: Failed to create directory {directory}: {str(e)}")
-                # Try the shell command as a fallback
+                    print(f"Failed to create directory {directory} with os.makedirs: {str(e)}")
+                
+                # Method 2: subprocess mkdir
+                if not dir_created:
+                    try:
+                        subprocess.run(["mkdir", "-p", directory], check=True)
+                        if os.path.exists(directory):
+                            dir_created = True
+                            print(f"Created directory {directory} with mkdir shell command")
+                    except Exception as e:
+                        print(f"Failed to create directory {directory} with mkdir: {str(e)}")
+                
+                # Method 3: subprocess with sh -c
+                if not dir_created:
+                    try:
+                        subprocess.run(["sh", "-c", f"mkdir -p {directory}"], check=True)
+                        if os.path.exists(directory):
+                            dir_created = True
+                            print(f"Created directory {directory} with sh -c mkdir command")
+                    except Exception as e:
+                        print(f"Failed to create directory {directory} with sh -c mkdir: {str(e)}")
+            
+            # Now set permissions
+            if dir_created or os.path.exists(directory):
+                # Try multiple methods to set permissions
+                perm_set = False
+                
+                # Method 1: os.chmod
                 try:
-                    subprocess.run(["mkdir", "-p", directory], check=True)
+                    os.chmod(directory, 0o777)
+                    perm_set = True
+                    print(f"Set permissions for {directory} with os.chmod")
+                except Exception as e:
+                    print(f"Failed to set permissions for {directory} with os.chmod: {str(e)}")
+                
+                # Method 2: chmod shell command
+                try:
                     subprocess.run(["chmod", "777", directory], check=False)
-                    print(f"Created directory {directory} using shell fallback")
-                except Exception as e2:
-                    print(f"CRITICAL: Both methods failed for {directory}: {str(e2)}")
-                    # Continue attempting with other directories
+                    perm_set = True
+                    print(f"Set permissions for {directory} with chmod command")
+                except Exception as e:
+                    print(f"Failed to set permissions for {directory} with chmod: {str(e)}")
+                
+                # Verify directory is writable
+                if not os.access(directory, os.W_OK):
+                    print(f"WARNING: Directory {directory} is not writable after permission setting!")
+                    
+                    # One more try with sh -c
+                    try:
+                        subprocess.run(["sh", "-c", f"chmod -R 777 {directory}"], check=False)
+                        print(f"Attempted to set permissions with sh -c chmod as last resort")
+                    except Exception as e:
+                        print(f"Failed in last permission setting attempt: {str(e)}")
+            else:
+                print(f"CRITICAL: Could not create directory {directory} using any method!")
+                if '.local/bin' in directory:  # This directory is critical
+                    critical_dirs_failed = True
+            
+            # Final verification
+            if os.path.exists(directory) and os.access(directory, os.W_OK):
+                print(f"✓ Successfully created and verified {directory}")
+            else:
+                print(f"✗ Failed to properly set up {directory}")
+                if '.local/bin' in directory:  # This directory is critical
+                    critical_dirs_failed = True
+        
+        # If critical directories failed, we cannot continue
+        if critical_dirs_failed:
+            print(f"CRITICAL ERROR: Failed to create essential directories in {home_dir}")
+            return False
         
         # Write template files quickly - use try/except for each operation
         user_bin_dir = os.path.join(home_dir, '.local', 'bin')
@@ -1681,9 +1801,44 @@ done
         setup_time = time.time() - start_time
         print(f"User environment setup completed in {setup_time:.2f} seconds")
         
+        # Final verification - ensure the critical .local/bin directory exists and is writable
+        # This is essential for scripts to be copied and executed
+        user_bin_dir = os.path.join(home_dir, '.local', 'bin')
+        if not os.path.exists(user_bin_dir):
+            print(f"CRITICAL ERROR: User bin directory {user_bin_dir} does not exist at end of setup")
+            # Last attempt to create it
+            try:
+                os.makedirs(user_bin_dir, exist_ok=True)
+                os.chmod(user_bin_dir, 0o777)
+                subprocess.run(["chmod", "777", user_bin_dir], check=False)
+                print(f"Last-ditch attempt to create user bin directory")
+            except Exception as e:
+                print(f"Final attempt to create bin directory failed: {str(e)}")
+                return False
+        
+        if not os.access(user_bin_dir, os.W_OK):
+            print(f"CRITICAL ERROR: User bin directory {user_bin_dir} is not writable")
+            # Last attempt to fix permissions
+            try:
+                os.chmod(user_bin_dir, 0o777)
+                subprocess.run(["chmod", "777", user_bin_dir], check=False)
+                subprocess.run(["sh", "-c", f"chmod -R 777 {user_bin_dir}"], check=False)
+                print(f"Last-ditch attempt to set bin directory permissions")
+            except Exception as e:
+                print(f"Final attempt to set bin directory permissions failed: {str(e)}")
+                return False
+        
+        print(f"✓ User environment setup completed successfully for {home_dir}")
         return True
     except Exception as e:
         print(f"Error setting up user environment for {home_dir}: {str(e)}")
+        # In case of any exception, try a basic recovery to ensure the directory at least exists
+        try:
+            os.makedirs(os.path.join(home_dir, '.local', 'bin'), exist_ok=True)
+            subprocess.run(["mkdir", "-p", os.path.join(home_dir, '.local', 'bin')], check=False)
+            subprocess.run(["chmod", "-R", "777", home_dir], check=False)
+        except Exception:
+            pass  # Ignore errors in last-ditch recovery
         return False
 
 
