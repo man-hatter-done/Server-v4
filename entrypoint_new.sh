@@ -10,19 +10,19 @@ echo "Starting temporary server on port 3000..."
 python3 -c "
 import socket, threading, time, os
 def handle_conn(conn):
-    conn.send(b'HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nContent-Length: 19\\r\\n\\r\\nServer initializing.')
+    conn.send(b\"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nContent-Length: 19\\r\\n\\r\\nServer initializing.\")
     conn.close()
 s = socket.socket()
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 try:
-    s.bind(('0.0.0.0', int(os.environ.get('PORT', 3000))))
+    s.bind((\"0.0.0.0\", int(os.environ.get(\"PORT\", 3000))))
     s.listen(5)
-    print('Temporary server listening on port ' + str(os.environ.get('PORT', 3000)))
+    print(\"Temporary server listening on port \" + str(os.environ.get(\"PORT\", 3000)))
     threading.Thread(target=lambda: [
         handle_conn(conn) for conn, _ in iter(lambda: s.accept(), None)
     ], daemon=True).start()
 except Exception as e:
-    print('Failed to start temporary server:', e)
+    print(\"Failed to start temporary server:\", e)
 " &
 TEMP_SERVER_PID=$!
 # Give temporary server time to start
@@ -66,7 +66,7 @@ chmod 777 logs user_data
 # Print configuration
 echo "Server Configuration:"
 echo "---------------------"
-echo "PORT: $PORT" 
+echo "PORT: $PORT"
 echo "USE_CONTAINERS: $USE_CONTAINERS"
 echo "MAX_CONTAINERS: $MAX_CONTAINERS"
 echo "USERS_PER_CONTAINER: $USERS_PER_CONTAINER"
