@@ -86,7 +86,8 @@ RUN useradd -m -s /bin/bash app-user && \
     chown -R app-user:app-user /app
 
 # Add user to docker group to access Docker socket
-RUN usermod -aG docker app-user && \
+RUN groupadd -f docker && \
+    usermod -aG docker app-user && \
     echo "app-user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/app-user && \
     chmod 0440 /etc/sudoers.d/app-user
 
