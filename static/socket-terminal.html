@@ -41,6 +41,23 @@
                     <div id="prompt-text" class="prompt-text">~ $</div>
                     <input id="command-input" type="text" class="command-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type commands here...">
                 </div>
+                <!-- Direct fix for PointerEvent bug -->
+                <script>
+                    // Immediately protect against PointerEvent issues
+                    document.addEventListener('DOMContentLoaded', function() {
+                        // Protect terminal container from passing click events as commands
+                        const terminalOutput = document.getElementById('terminal-output');
+                        if (terminalOutput) {
+                            terminalOutput.addEventListener('click', function(e) {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                // Focus input instead
+                                const commandInput = document.getElementById('command-input');
+                                if (commandInput) commandInput.focus();
+                            });
+                        }
+                    });
+                </script>
             </div>
             
             <div class="control-panel">
@@ -104,6 +121,22 @@
     
     <!-- Socket.IO Client Library with integrity hash for security -->
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" integrity="sha384-mZLF4UVrpi/QTWPA7BjNPEnkIfRFn4ZEO42JC8Gx7WJpTpWHZcxzYpTyBnEf8pTl" crossorigin="anonymous"></script>
+    
+    <!-- Global error handler to catch PointerEvent issues -->
+    <script>
+        window.addEventListener('error', function(event) {
+            if (event.message && (
+                event.message.includes('[object PointerEvent]') || 
+                event.message.includes('PointerEvent') ||
+                event.message.includes('is not a function')
+            )) {
+                console.error('Prevented PointerEvent error:', event);
+                event.preventDefault();
+                alert('Error: Browser event detected as command. Please reload the page and try again.');
+                return false;
+            }
+        });
+    </script>
     
     <!-- Browser compatibility polyfills -->
     <script>

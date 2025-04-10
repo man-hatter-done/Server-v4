@@ -133,6 +133,23 @@
             <input type="text" id="command" placeholder="Enter command..." autofocus>
         </div>
     </div>
+    
+    <!-- Direct fix for PointerEvent bug - prevent clicks from passing as commands -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add click protection to terminal container
+            const terminalElement = document.getElementById('terminal');
+            if (terminalElement) {
+                terminalElement.addEventListener('click', function(event) {
+                    // Prevent event from becoming a command
+                    event.stopPropagation();
+                    // Focus the command input instead
+                    const commandInput = document.getElementById('command');
+                    if (commandInput) commandInput.focus();
+                });
+            }
+        });
+    </script>
 
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script>
@@ -319,6 +336,31 @@
         }
         
         function executeCommand(command) {
+            // Direct fix for PointerEvent bug - validate command is not an event object
+            if (typeof command !== 'string') {
+                console.error('Invalid command type:', typeof command);
+                if (command instanceof Event) {
+                    console.error('Cannot execute Event object as command');
+                    appendToTerminal('Error: Invalid command format', 'error');
+                    return;
+                }
+                
+                try {
+                    command = String(command);
+                } catch (e) {
+                    console.error('Failed to convert command to string');
+                    appendToTerminal('Error: Invalid command format', 'error');
+                    return;
+                }
+            }
+            
+            // Block any PointerEvent text that got through
+            if (command && command.includes('[object PointerEvent]')) {
+                console.error('Blocked PointerEvent string from being executed');
+                appendToTerminal('Error: Invalid command format', 'error');
+                return;
+            }
+            
             if (!command.trim()) return;
             
             // Disable input while command is running

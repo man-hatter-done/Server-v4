@@ -50,6 +50,21 @@
                     <span id="prompt-text" class="prompt">~ $</span>
                     <input type="text" id="command-input" placeholder="Enter command..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
                 </div>
+                <!-- Direct fix for PointerEvent bug -->
+                <script>
+                    // Add immediate click protection to prevent PointerEvent passing
+                    const terminalOutput = document.getElementById('terminal-output');
+                    if (terminalOutput) {
+                        terminalOutput.addEventListener('click', function(event) {
+                            // Stop event propagation to prevent it being passed as a command
+                            event.stopPropagation();
+                            event.preventDefault();
+                            // Focus input instead
+                            const commandInput = document.getElementById('command-input');
+                            if (commandInput) commandInput.focus();
+                        });
+                    }
+                </script>
             </div>
             
             <div class="control-panel">
@@ -176,6 +191,17 @@
         </footer>
     </div>
     
+    <script>
+        // Global error handler to catch PointerEvent issues
+        window.addEventListener('error', function(event) {
+            if (event.message && event.message.includes('[object PointerEvent]')) {
+                console.error('Prevented PointerEvent error:', event);
+                event.preventDefault();
+                alert('Error: Browser event detected as command. Please reload the page and try again.');
+                return false;
+            }
+        });
+    </script>
     <script src="terminal-v2.js"></script>
     <script>
         // Initialize quick commands

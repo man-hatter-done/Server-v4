@@ -509,6 +509,12 @@ def handle_execute_command(data):
             logger.warning(f"Invalid command type or empty command: {type(command)}")
             socketio.emit('command_error', {'error': 'No command provided or invalid format'}, to=request.sid)
             return
+        
+        # Reject any command that looks like an event object
+        if "[object " in command and "]" in command:
+            logger.warning(f"Rejected command that appears to be an object string: {command}")
+            socketio.emit('command_error', {'error': 'Invalid command format: Object reference detected'}, to=request.sid)
+            return
             
         # Check for overly long commands
         if len(command) > 4096:  # Reasonable limit for command length
@@ -2524,6 +2530,11 @@ def execute_command():
         
     data = request.json or {}
     command = data.get('command')
+    
+    # Block any command that looks like a PointerEvent object
+    if isinstance(command, str) and "[object PointerEvent]" in command:
+        logger.warning(f"Blocked PointerEvent command: {command} from session {session_id}")
+        return jsonify({'error': 'Invalid command format: PointerEvent object detected'}), 400
     
     if not command:
         return jsonify({'error': 'Command is required'}), 400
