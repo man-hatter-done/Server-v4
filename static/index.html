@@ -151,13 +151,42 @@
             background-color: var(--code-bg);
             color: var(--code-color);
             padding: 1rem;
-            border-radius: 3px;
+            border-radius: 5px;
             overflow-x: auto;
             margin: 1rem 0;
+            position: relative; /* For copy button positioning */
+        }
+        
+        pre:hover .copy-button {
+            opacity: 1;
+        }
+        
+        .copy-button {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background-color: rgba(255, 255, 255, 0.1);
+            border: none;
+            border-radius: 4px;
+            color: #fff;
+            padding: 5px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            opacity: 0.3;
+        }
+        
+        .copy-button:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        .copy-button.success {
+            background-color: #4CAF50;
+            opacity: 1;
         }
         
         code {
-            font-family: 'Courier New', Courier, monospace;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
         }
         
         .params {
@@ -967,5 +996,120 @@ sudo systemctl status ios-terminal</code></pre>
             <p><a href="https://github.com/app-an-server-official/Server-v4">GitHub Repository</a></p>
         </footer>
     </div>
+    <!-- Interactive documentation features -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add copy buttons to all code blocks
+            document.querySelectorAll('pre').forEach(function(pre) {
+                // Create copy button
+                const copyButton = document.createElement('button');
+                copyButton.textContent = 'Copy';
+                copyButton.className = 'copy-button';
+                pre.appendChild(copyButton);
+                
+                // Add click event
+                copyButton.addEventListener('click', function() {
+                    // Get code content
+                    const code = pre.querySelector('code') || pre;
+                    const textToCopy = code.textContent;
+                    
+                    // Copy to clipboard
+                    navigator.clipboard.writeText(textToCopy).then(function() {
+                        // Success feedback
+                        copyButton.textContent = 'Copied!';
+                        copyButton.classList.add('success');
+                        
+                        // Reset after 2 seconds
+                        setTimeout(function() {
+                            copyButton.textContent = 'Copy';
+                            copyButton.classList.remove('success');
+                        }, 2000);
+                    }).catch(function(err) {
+                        console.error('Failed to copy: ', err);
+                        copyButton.textContent = 'Failed';
+                        
+                        // Reset after 2 seconds
+                        setTimeout(function() {
+                            copyButton.textContent = 'Copy';
+                        }, 2000);
+                    });
+                });
+            });
+            
+            // Make API endpoints clickable for testing
+            document.querySelectorAll('.endpoint .path').forEach(function(path) {
+                path.style.cursor = 'pointer';
+                path.title = 'Click to test this endpoint';
+                
+                path.addEventListener('click', function() {
+                    const method = path.previousElementSibling.textContent.trim().toLowerCase();
+                    const endpoint = path.textContent.trim();
+                    
+                    // For GET endpoints, we can navigate directly
+                    if (method === 'get') {
+                        if (endpoint.startsWith('/')) {
+                            const url = window.location.origin + endpoint;
+                            window.open(url, '_blank');
+                        }
+                    } else {
+                        // For other methods, show info about testing
+                        alert(`To test ${method.toUpperCase()} ${endpoint}:\n\nUse the terminal at /ws or a tool like curl, Postman, or the iOS example code.`);
+                    }
+                });
+            });
+            
+            // Smooth scrolling for navigation
+            document.querySelectorAll('.main-nav a').forEach(anchor => {
+                anchor.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    
+                    // Remove active class from all links
+                    document.querySelectorAll('.main-nav a').forEach(a => a.classList.remove('active'));
+                    
+                    // Add active class to clicked link
+                    this.classList.add('active');
+                    
+                    const targetId = this.getAttribute('href');
+                    if (targetId.startsWith('#')) {
+                        const targetElement = document.querySelector(targetId);
+                        if (targetElement) {
+                            window.scrollTo({
+                                top: targetElement.offsetTop - 20,
+                                behavior: 'smooth'
+                            });
+                            
+                            // Update URL without reload
+                            history.pushState(null, null, targetId);
+                        }
+                    } else {
+                        // External link, just navigate
+                        window.location.href = targetId;
+                    }
+                });
+            });
+            
+            // Active link tracking on scroll
+            window.addEventListener('scroll', function() {
+                const scrollPosition = window.scrollY;
+                
+                // Find which section is in view
+                document.querySelectorAll('section[id]').forEach(section => {
+                    const sectionTop = section.offsetTop - 100;
+                    const sectionBottom = sectionTop + section.offsetHeight;
+                    
+                    if (scrollPosition >= sectionTop && scrollPosition < sectionBottom) {
+                        // Remove active class from all links
+                        document.querySelectorAll('.main-nav a').forEach(a => a.classList.remove('active'));
+                        
+                        // Add active class to corresponding link
+                        const correspondingLink = document.querySelector(`.main-nav a[href="#${section.id}"]`);
+                        if (correspondingLink) {
+                            correspondingLink.classList.add('active');
+                        }
+                    }
+                });
+            });
+        });
+    </script>
 </body>
 </html>
