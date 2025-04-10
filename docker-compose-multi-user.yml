@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # Main terminal server
+  terminal-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.flask
+    ports:
+      - "3000:3000"
+    environment:
+      - DEBUG=false
+      - PORT=3000
+      - SESSION_TIMEOUT=3600
+      - USE_AUTH=false
+      - COMMAND_TIMEOUT=300
+      - ENABLE_SYSTEM_COMMANDS=true
+      - USE_CONTAINERS=true
+      - MAX_CONTAINERS=10
+      - USERS_PER_CONTAINER=20
+      - CONTAINER_IMAGE=terminal-multi-user:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - terminal-workspace:/app/user_data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - terminal-user-image
+
+  # User container image builder service
+  # This service just builds the image and exits
+  terminal-user-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.multi-user
+    image: terminal-multi-user:latest
+    entrypoint: ["echo", "User container image built successfully"]
+    volumes:
+      - terminal-workspace:/workspace
+
+volumes:
+  terminal-workspace:
+    driver: local

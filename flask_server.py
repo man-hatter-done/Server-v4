@@ -12,7 +12,9 @@ import functools
 import cachetools.func
 import re
 import hashlib
+import logging
 from datetime import datetime
+from container_pool import ContainerPool
 from flask import Flask, request, jsonify, send_from_directory, send_file, render_template, make_response
 from flask_cors import CORS
 from flask_compress import Compress
@@ -96,6 +98,43 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev_key_change_in_produ
 print(f"Flask app initialization starting at {time.time()}")
 print(f"Python version: {sys.version}")
 print(f"System platform: {sys.platform}")
+
+# Initialize logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("flask_server.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("flask_server")
+
+# Initialize container pool for multi-user isolation
+# These values can be overridden with environment variables
+MAX_CONTAINERS = int(os.environ.get('MAX_CONTAINERS', 10))
+USERS_PER_CONTAINER = int(os.environ.get('USERS_PER_CONTAINER', 20))
+CONTAINER_IMAGE = os.environ.get('CONTAINER_IMAGE', 'terminal-multi-user:latest')
+
+# Global container pool instance - only initialize if we're using containers
+USE_CONTAINERS = os.environ.get('USE_CONTAINERS', 'false').lower() == 'true'
+container_pool = None
+
+if USE_CONTAINERS:
+    try:
+        logger.info("Initializing container pool...")
+        container_pool = ContainerPool(
+            max_containers=MAX_CONTAINERS,
+            users_per_container=USERS_PER_CONTAINER,
+            image_name=CONTAINER_IMAGE
+        )
+        logger.info(f"Container pool initialized with {MAX_CONTAINERS} containers, {USERS_PER_CONTAINER} users per container")
+    except Exception as e:
+        logger.error(f"Failed to initialize container pool: {str(e)}")
+        logger.warning("Falling back to directory-based isolation")
+else:
+    logger.info("Using directory-based isolation (container mode disabled)")
+
 try:
     import psutil
     mem = psutil.virtual_memory()
@@ -365,7 +404,7 @@ def handle_execute_command(data):
             }, to=request.sid)
             
         except Exception as e:
-            print(f"Error creating new session: {str(e)}")
+            logger.error(f"Error creating new session: {str(e)}")
             socketio.emit('command_error', {
                 'error': f"Failed to create new session: {str(e)}"
             }, to=request.sid)
@@ -376,15 +415,54 @@ def handle_execute_command(data):
         if session_id in sessions:
             sessions[session_id]['last_accessed'] = time.time()
     
-    # Verify the user directory exists for all commands - create it if it doesn't
+    # If using container pool, execute the command there
+    if USE_CONTAINERS and container_pool is not None:
+        try:
+            logger.debug(f"WebSocket: Executing command via container pool: {command}")
+            
+            # Define a callback function to stream output
+            def output_callback(text):
+                if text:
+                    socketio.emit('command_output', {'output': text}, to=request.sid)
+            
+            # Execute the command with streaming output
+            result = container_pool.execute_command_stream(
+                session['user_id'], 
+                command, 
+                output_callback
+            )
+            
+            # Send completion message
+            socketio.emit('command_complete', {
+                'exitCode': result.get('exit_code', 0),
+                'sessionRenewed': auto_renewed,
+                'newSessionId': session_id if auto_renewed else None
+            }, to=request.sid)
+            
+            # If it's a command that might give container info, send it separately
+            if 'container-info' in command.lower() or 'hostname' in command.lower() or 'whoami' in command.lower():
+                socketio.emit('container_info', {
+                    'containerId': result.get('container_id', ''),
+                    'username': result.get('username', '')
+                }, to=request.sid)
+            
+            return
+            
+        except Exception as e:
+            logger.error(f"WebSocket: Container execution error: {str(e)}")
+            # Fall back to directory-based execution
+            logger.info("WebSocket: Falling back to directory-based execution")
+            # Continue with execution flow below
+    
+    # Directory-based execution - verify the user directory exists
     if not os.path.isdir(session['home_dir']):
         try:
             os.makedirs(session['home_dir'], exist_ok=True)
-            print(f"Created missing user directory: {session['home_dir']}")
+            logger.info(f"Created missing user directory: {session['home_dir']}")
             # Since we had to create the directory, we should set up the environment
             setup_user_environment(session['home_dir'])
         except Exception as e:
-            print(f"Error creating user directory: {str(e)}")
+            logger.error(f"Error creating user directory: {str(e)}")
             socketio.emit('command_error', {
                 'error': f"Could not access user directory: {str(e)}"
             }, to=request.sid)
@@ -1750,6 +1828,12 @@ def index():
     """Serve web terminal interface"""
     return send_file('static/simple-terminal.html')
 
+@app.route('/container-terminal')
+@cached_response(timeout=3600)  # Cache for 1 hour
+def container_terminal():
+    """Serve container-based terminal interface"""
+    return send_file('static/container-terminal.html')
+
 @app.route('/status')
 @cached_response(timeout=60)  # Cache for 1 minute only to keep data fresh
 def status_dashboard():
@@ -2061,7 +2145,7 @@ def execute_command():
     # If the session is invalid or expired, create a new one instead of returning an error
     if not session:
         # Create a new session for this user/device
-        print(f"Session {session_id} invalid or expired, creating a new session")
+        logger.info(f"Session {session_id} invalid or expired, creating a new session")
         
         # Use client IP or device ID as a fallback user ID
         user_id = request.headers.get('X-Device-Id', request.remote_addr)
@@ -2110,6 +2194,35 @@ def execute_command():
     with session_lock:
         if session_id in sessions:
             sessions[session_id]['last_accessed'] = time.time()
+            
+    # Execute command using container pool if available
+    if USE_CONTAINERS and container_pool is not None:
+        try:
+            logger.debug(f"Executing command via container pool: {command}")
+            result = container_pool.execute_command(session['user_id'], command)
+            
+            if 'error' in result:
+                logger.warning(f"Command execution error: {result['error']}")
+                return jsonify({
+                    'error': result['error'],
+                    'exitCode': result.get('exit_code', 1),
+                    'sessionRenewed': auto_renewed,
+                    'newSessionId': session_id if auto_renewed else None
+                }), 500
+            
+            # Return successful result
+            return jsonify({
+                'output': result.get('output', ''),
+                'exitCode': result.get('exit_code', 0),
+                'sessionRenewed': auto_renewed,
+                'newSessionId': session_id if auto_renewed else None
+            })
+            
+        except Exception as e:
+            logger.error(f"Container execution error: {str(e)}")
+            # Fall back to directory-based execution
+            logger.info("Falling back to directory-based execution")
+            # Continue with normal execution flow below
     
     # Handle special commands
     if command.strip() == 'help':
