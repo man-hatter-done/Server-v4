@@ -63,13 +63,32 @@ def register_file_management_endpoints(app, get_session):
             return jsonify({'error': 'Invalid or expired session'}), 401
         
         path = request.args.get('path', '')
+        
         # Sanitize path to prevent path traversal
         base_dir = session['home_dir']
+        
+        # Clean the path parameter
+        if path and (path.strip() == '.' or path.strip() == '..' or '/.' in path or '/..' in path):
+            return jsonify({'error': 'Invalid path containing . or .. references'}), 403
+            
+        # Remove any null bytes which can be used in path traversal attacks
+        if path and '\0' in path:
+            return jsonify({'error': 'Invalid path containing null bytes'}), 403
+            
+        # Remove any URL encoded attacks (%2e%2e/, etc.)
+        from urllib.parse import unquote
+        decoded_path = unquote(path)
+        if path != decoded_path:
+            if '..' in decoded_path or '/.' in decoded_path:
+                return jsonify({'error': 'Invalid encoded path'}), 403
+        
+        # Normalize path and check for directory traversal
         target_path = os.path.normpath(os.path.join(base_dir, path))
         
-        # Ensure the path is within the user's home directory
-        if not target_path.startswith(base_dir):
-            return jsonify({'error': 'Invalid path'}), 403
+        # Double-check the path is within the user's home directory
+        if not os.path.commonpath([target_path, base_dir]) == base_dir:
+            logger.warning(f"Path traversal attempt detected: {path} -> {target_path} (outside {base_dir})")
+            return jsonify({'error': 'Invalid path - directory traversal detected'}), 403
         
         try:
             if not os.path.exists(target_path):

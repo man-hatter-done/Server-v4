@@ -3,12 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>iOS Terminal - Modern Interface</title>
+    
+    <!-- Security headers -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.socket.io https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' wss://*;">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block">
+    
+    <!-- Styles and theme -->
     <link rel="stylesheet" href="style-v2.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer">
     <meta name="theme-color" content="#121212">
-    <!-- Socket.IO Client Library -->
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    
+    <!-- Socket.IO Client Library with integrity hash -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" integrity="sha384-mZLF4UVrpi/QTWPA7BjNPEnkIfRFn4ZEO42JC8Gx7WJpTpWHZcxzYpTyBnEf8pTl" crossorigin="anonymous"></script>
+    
+    <!-- Browser compatibility -->
+    <script>
+        // Polyfill for older browsers
+        if (!window.Promise) {
+            document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/es6-promise/4.2.8/es6-promise.auto.min.js"><\/script>');
+        }
+    </script>
 </head>
 <body data-theme="dark">
     <div class="container">
@@ -104,6 +121,15 @@
                         <button class="quick-command" data-command="python3 --version">python3 --version</button>
                         <button class="quick-command" data-command="help">help</button>
                     </div>
+                    <script>
+                        // Add immediate event handler for quick command buttons to prevent using old handlers in initial load
+                        document.querySelectorAll('.quick-command').forEach(btn => {
+                            btn.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                            });
+                        });
+                    </script>
                 </div>
                 
                 <div class="panel-section mobile-only">
@@ -114,6 +140,29 @@
                         <button class="keyboard-key" data-key="ArrowLeft">←</button>
                         <button class="keyboard-key" data-key="ArrowRight">→</button>
                         <button class="keyboard-key" data-key="Ctrl-C">Ctrl+C</button>
+                    </div>
+                    
+                    <!-- Touch-optimized key modifiers for mobile devices -->
+                    <div class="mobile-keyboard-modifiers">
+                        <button class="keyboard-modifier" data-modifier="ctrl">Ctrl</button>
+                        <button class="keyboard-modifier" data-modifier="alt">Alt</button>
+                        <button class="keyboard-modifier" data-modifier="shift">Shift</button>
+                        <button class="keyboard-key" data-key="Escape">Esc</button>
+                    </div>
+                    
+                    <!-- Common mobile commands -->
+                    <div class="mobile-quick-actions">
+                        <button class="mobile-action" data-action="clear">Clear Screen</button>
+                        <button class="mobile-action" data-action="keyboard">Show Keyboard</button>
+                    </div>
+                </div>
+                
+                <!-- Mobile-friendly error display -->
+                <div id="mobile-error-display" class="mobile-error-display" style="display: none;">
+                    <div class="error-content">
+                        <h3>Error</h3>
+                        <p id="mobile-error-message"></p>
+                        <button id="mobile-error-dismiss">Dismiss</button>
                     </div>
                 </div>
             </div>
@@ -133,7 +182,10 @@
         document.addEventListener('DOMContentLoaded', function() {
             const quickCommands = document.querySelectorAll('.quick-command');
             quickCommands.forEach(button => {
-                button.addEventListener('click', function() {
+                button.addEventListener('click', function(event) {
+                    // Prevent event bubbling which could cause issues
+                    event.stopPropagation();
+                    
                     const command = this.getAttribute('data-command');
                     const commandInput = document.getElementById('command-input');
                     commandInput.value = command;
@@ -144,7 +196,10 @@
             // Initialize keyboard helpers
             const keyboardKeys = document.querySelectorAll('.keyboard-key');
             keyboardKeys.forEach(button => {
-                button.addEventListener('click', function() {
+                button.addEventListener('click', function(event) {
+                    // Prevent event bubbling which could cause issues
+                    event.stopPropagation();
+                    
                     const key = this.getAttribute('data-key');
                     const commandInput = document.getElementById('command-input');
                     
