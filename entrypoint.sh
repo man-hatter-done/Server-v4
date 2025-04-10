@@ -84,5 +84,104 @@ EOL
 # Start the server using Flask-SocketIO's built-in server
 echo "Starting Socket.IO server on port $PORT..."
 
+# Add memory monitoring
+echo "Setting up memory monitoring..."
+if command -v python3 >/dev/null 2>&1; then
+    # Create a simple memory monitor script
+    cat > memory_monitor.py << 'EOL'
+#!/usr/bin/env python3
+import time
+import os
+import psutil
+import logging
+import gc
+import signal
+import sys
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - MemoryMonitor - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("logs/memory_monitor.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("memory_monitor")
+
+# Memory thresholds (percentages)
+WARNING_THRESHOLD = 80
+CRITICAL_THRESHOLD = 90
+EMERGENCY_THRESHOLD = 95
+
+def format_bytes(bytes):
+    """Format bytes to human-readable size"""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if bytes < 1024 or unit == 'GB':
+            return f"{bytes:.2f} {unit}"
+        bytes /= 1024
+
+def monitor_memory():
+    """Monitor memory usage and take actions if thresholds are reached"""
+    try:
+        process = psutil.Process(os.getpid())
+        parent_process = psutil.Process(os.getppid())
+        
+        while True:
+            # Get memory info
+            system_memory = psutil.virtual_memory()
+            process_memory = process.memory_info()
+            
+            memory_percent = system_memory.percent
+            available_mb = system_memory.available / (1024 * 1024)
+            process_mb = process_memory.rss / (1024 * 1024)
+            
+            logger.info(f"Memory: {memory_percent:.1f}% used, {format_bytes(system_memory.available)} available, Process using {format_bytes(process_memory.rss)}")
+            
+            # Take action based on memory usage
+            if memory_percent > EMERGENCY_THRESHOLD:
+                logger.critical(f"EMERGENCY: Memory usage at {memory_percent:.1f}%! Taking emergency actions...")
+                # Force garbage collection
+                gc.collect()
+                # Notify the parent process to restart
+                os.kill(parent_process.pid, signal.SIGUSR1)
+                
+            elif memory_percent > CRITICAL_THRESHOLD:
+                logger.warning(f"CRITICAL: Memory usage at {memory_percent:.1f}%! Running aggressive garbage collection...")
+                # Force garbage collection
+                gc.collect()
+                # Signal the main app to clear caches
+                os.kill(parent_process.pid, signal.SIGUSR2)
+                
+            elif memory_percent > WARNING_THRESHOLD:
+                logger.warning(f"WARNING: Memory usage at {memory_percent:.1f}%! Running garbage collection...")
+                # Regular garbage collection
+                gc.collect()
+            
+            # Adjust monitoring interval based on memory pressure
+            if memory_percent > CRITICAL_THRESHOLD:
+                time.sleep(10)  # Check more frequently under high memory
+            else:
+                time.sleep(60)  # Normal monitoring interval
+                
+    except Exception as e:
+        logger.error(f"Memory monitoring error: {str(e)}")
+        time.sleep(60)  # Wait before trying again
+        monitor_memory()  # Restart monitoring
+
+if __name__ == "__main__":
+    logger.info("Memory monitor started")
+    monitor_memory()
+EOL
+
+    # Make it executable
+    chmod +x memory_monitor.py
+
+    # Start memory monitor in the background
+    echo "Starting memory monitor..."
+    python3 memory_monitor.py &
+fi
+
 # Run with additional diagnostic output
+echo "Starting main server application..."
 python3 -u run.py

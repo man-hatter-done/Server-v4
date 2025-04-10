@@ -92,7 +92,19 @@ app.config['START_TIME'] = time.time()  # Track app startup time for uptime repo
 app.config['SERVER_VERSION'] = 'flask-2.0.0'  # Server version for consistent reporting
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # Limit request size to 16MB
 app.config['PROPAGATE_EXCEPTIONS'] = True  # Make sure exceptions are properly propagated
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev_key_change_in_production')  # Required for SocketIO
+
+# Generate a secure random key if not provided in environment
+if os.environ.get('SECRET_KEY'):
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
+else:
+    # In production, warn about missing SECRET_KEY and generate a random one
+    if os.environ.get('FLASK_ENV') == 'production':
+        logger.warning("SECRET_KEY not set in production environment! Generating a random key for this session.")
+    
+    # Generate a secure random key (will change on restart)
+    import secrets
+    app.config['SECRET_KEY'] = secrets.token_hex(32)
+    logger.info("Generated random SECRET_KEY for this session")
 
 # Add initialization logging to help diagnose worker issues
 print(f"Flask app initialization starting at {time.time()}")
@@ -104,11 +116,101 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("flask_server.log"),
+        logging.FileHandler("logs/flask_server.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger("flask_server")
+
+# Set up error monitoring
+class ErrorMonitor:
+    def __init__(self):
+        self.errors = []
+        self.error_count = 0
+        self.last_errors = {}  # type -> timestamp
+        self.max_stored_errors = 100
+        
+    def record_error(self, error_type, error_message, context=None):
+        """Record an error for monitoring"""
+        now = time.time()
+        
+        # Check if we're getting too many errors of the same type
+        if error_type in self.last_errors:
+            # If we've seen this error type in the last minute, increment counter but don't store
+            if now - self.last_errors[error_type] < 60:
+                self.error_count += 1
+                return
+                
+        # Update the last seen timestamp for this error type
+        self.last_errors[error_type] = now
+        
+        # Add the error to our list
+        error_entry = {
+            'type': error_type,
+            'message': error_message,
+            'timestamp': now,
+            'context': context or {}
+        }
+        
+        # Keep the list from growing too large
+        if len(self.errors) >= self.max_stored_errors:
+            self.errors.pop(0)  # Remove the oldest error
+            
+        self.errors.append(error_entry)
+        self.error_count += 1
+        
+        # Log the error
+        logger.error(f"Error {error_type}: {error_message} Context: {context}")
+        
+    def get_recent_errors(self, minutes=60, error_type=None):
+        """Get errors from the last X minutes, optionally filtered by type"""
+        cutoff = time.time() - (minutes * 60)
+        if error_type:
+            return [e for e in self.errors if e['timestamp'] >= cutoff and e['type'] == error_type]
+        else:
+            return [e for e in self.errors if e['timestamp'] >= cutoff]
+            
+    def get_error_count(self):
+        """Get the total number of errors recorded"""
+        return self.error_count
+        
+    def get_error_rate(self, minutes=5):
+        """Get the error rate (errors per minute) for the last X minutes"""
+        recent_errors = self.get_recent_errors(minutes)
+        return len(recent_errors) / minutes
+
+# Create global error monitor
+error_monitor = ErrorMonitor()
+
+# Set up error handlers
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Global exception handler for unhandled exceptions"""
+    error_type = type(e).__name__
+    error_message = str(e)
+    
+    # Record the error
+    context = {
+        'url': request.path,
+        'method': request.method,
+        'user_agent': request.user_agent.string,
+        'ip': request.remote_addr
+    }
+    error_monitor.record_error(error_type, error_message, context)
+    
+    # Return JSON response for API requests
+    if request.path.startswith('/api/') or request.headers.get('Accept') == 'application/json':
+        return jsonify({
+            'error': 'Internal server error',
+            'message': error_message if app.debug else 'An unexpected error occurred'
+        }), 500
+    
+    # Return HTML error page for web requests
+    if app.debug:
+        # In debug mode, let the default handler show the traceback
+        raise e
+    else:
+        return "Internal Server Error", 500
 
 # Initialize container pool for multi-user isolation
 # These values can be overridden with environment variables
@@ -156,13 +258,49 @@ except ImportError:
 compress = Compress()
 compress.init_app(app)
 
-# Enable CORS with optimized settings
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True, max_age=86400)
+# Enable CORS with security-focused settings
+# In production, restrict origins to specific domains
+allowed_origins = os.environ.get('ALLOWED_ORIGINS', '*')
+if os.environ.get('FLASK_ENV') == 'production' and allowed_origins == '*':
+    logger.warning("ALLOWED_ORIGINS is set to '*' in production. Consider restricting to specific domains.")
 
-# Initialize SocketIO
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', ping_timeout=30, 
-                    ping_interval=15, max_http_buffer_size=1024 * 1024)
+CORS(app, 
+     resources={r"/*": {"origins": allowed_origins.split(',') if ',' in allowed_origins else allowed_origins}}, 
+     supports_credentials=True, 
+     max_age=86400)
+
+# Add security headers middleware
+@app.after_request
+def add_security_headers(response):
+    # Prevent MIME type sniffing
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    # Enable XSS protection in browsers
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    # Prevent clickjacking
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    # Content Security Policy
+    if os.environ.get('FLASK_ENV') == 'production':
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' https://cdn.socket.io https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' wss://*;"
+    return response
+
+# Initialize SocketIO with better security settings
+# Use allowed origins from CORS configuration
+allowed_socket_origins = allowed_origins
+if allowed_socket_origins == '*' and os.environ.get('FLASK_ENV') == 'production':
+    logger.warning("SocketIO allowing all origins (*) in production. Consider restricting origins for better security.")
+    
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins=allowed_socket_origins, 
+    async_mode='eventlet', 
+    ping_timeout=30, 
+    ping_interval=15,
+    max_http_buffer_size=1024 * 1024,
+    logger=True,  # Enable SocketIO logging in production
+    engineio_logger=(os.environ.get('DEBUG', 'false').lower() == 'true')  # Only enable detailed engine logs in debug mode
+)
 print(f"SocketIO initialized with mode: {socketio.async_mode}")
+print(f"SocketIO allowed origins: {allowed_socket_origins}")
 
 # Map of active WebSocket sessions to their corresponding terminal sessions
 socket_sessions = {}
@@ -344,15 +482,38 @@ def handle_end_session(data):
 @socketio.on('execute_command')
 def handle_execute_command(data):
     """Execute a command in the terminal session with real-time output streaming"""
-    command = data.get('command')
-    session_id = data.get('session_id')
-    
-    if not command:
-        socketio.emit('command_error', {'error': 'No command provided'}, to=request.sid)
-        return
-    
-    if not session_id:
-        socketio.emit('command_error', {'error': 'No session ID provided'}, to=request.sid)
+    try:
+        # Input validation
+        if not isinstance(data, dict):
+            logger.warning(f"Invalid command data type: {type(data)}")
+            socketio.emit('command_error', {'error': 'Invalid command format'}, to=request.sid)
+            return
+            
+        command = data.get('command')
+        session_id = data.get('session_id')
+        
+        # Validate command is a string to prevent potential injection
+        if not command or not isinstance(command, str):
+            logger.warning(f"Invalid command type or empty command: {type(command)}")
+            socketio.emit('command_error', {'error': 'No command provided or invalid format'}, to=request.sid)
+            return
+            
+        # Check for overly long commands
+        if len(command) > 4096:  # Reasonable limit for command length
+            socketio.emit('command_error', {'error': 'Command too long'}, to=request.sid)
+            return
+        
+        if not session_id or not isinstance(session_id, str):
+            logger.warning(f"Invalid session ID type or missing: {type(session_id) if session_id else 'None'}")
+            socketio.emit('command_error', {'error': 'No session ID provided or invalid format'}, to=request.sid)
+            return
+            
+        # Log command for debugging (but don't log sensitive commands)
+        if not any(sensitive in command.lower() for sensitive in ['password', 'token', 'key', 'secret', 'credential']):
+            logger.debug(f"Executing command for session {session_id}: {command[:50]}{'...' if len(command) > 50 else ''}")
+    except Exception as e:
+        logger.error(f"Error validating command request: {str(e)}")
+        socketio.emit('command_error', {'error': 'Invalid request format'}, to=request.sid)
         return
     
     # Get the session

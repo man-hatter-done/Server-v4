@@ -2,9 +2,25 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>Real-Time Terminal (WebSocket)</title>
+    
+    <!-- Security headers -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.socket.io https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' wss://*;">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block">
+    
+    <!-- Styles -->
     <link rel="stylesheet" href="style-v2.css">
+    
+    <!-- Browser compatibility -->
+    <script>
+        // Polyfill for older browsers
+        if (!window.Promise) {
+            document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/es6-promise/4.2.8/es6-promise.auto.min.js"><\/script>');
+        }
+    </script>
 </head>
 <body data-theme="dark">
     <div class="main-container">
@@ -86,10 +102,33 @@
         </div>
     </div>
     
-    <!-- Socket.IO Client Library -->
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- Socket.IO Client Library with integrity hash for security -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" integrity="sha384-mZLF4UVrpi/QTWPA7BjNPEnkIfRFn4ZEO42JC8Gx7WJpTpWHZcxzYpTyBnEf8pTl" crossorigin="anonymous"></script>
     
-    <!-- Terminal JavaScript -->
-    <script src="socket-terminal.js"></script>
+    <!-- Browser compatibility polyfills -->
+    <script>
+        // Polyfill for older browsers
+        if (!window.Promise) {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/promise-polyfill@8/dist/polyfill.min.js"><\/script>');
+        }
+        
+        // Error handling for socket.io loading failures
+        window.addEventListener('error', function(e) {
+            if (e.message && e.message.includes('socket.io')) {
+                console.error('Error loading Socket.IO:', e);
+                // Create error message in the terminal
+                var outputDiv = document.getElementById('terminal-output');
+                if (outputDiv) {
+                    var errorDiv = document.createElement('div');
+                    errorDiv.className = 'command-entry error';
+                    errorDiv.textContent = 'Error connecting to server: Socket.IO failed to load. Please check your connection and try refreshing the page.';
+                    outputDiv.appendChild(errorDiv);
+                }
+            }
+        });
+    </script>
+    
+    <!-- Terminal JavaScript with error handling -->
+    <script src="socket-terminal.js" onerror="document.getElementById('terminal-output').innerHTML += '<div class=\'command-entry error\'>Failed to load terminal script. Please refresh the page.</div>';"></script>
 </body>
 </html>

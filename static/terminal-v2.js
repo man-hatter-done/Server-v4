@@ -10,6 +10,9 @@ let currentWorkingDirectory = '~';
 // Socket.IO connection
 let socket = null;
 let isWebSocketMode = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY = 2000; // ms
 
 // Store session information
 let currentSession = {
@@ -22,6 +25,12 @@ let currentSession = {
 
 // Base URL for API requests
 const API_BASE_URL = window.location.origin;
+
+// Add global error handler for unhandled promise rejections
+window.addEventListener('unhandledrejection', function(event) {
+    console.error('Unhandled promise rejection:', event.reason);
+    addTerminalText('⚠️ An unexpected error occurred. Please try again.', 'error');
+});
 
 // DOM Elements
 const terminalOutput = document.getElementById('terminal-output');
@@ -134,8 +143,8 @@ function initializeSocket() {
             socket = io(window.location.origin, {
                 transports: ['websocket', 'polling'],  // Allow fallback to polling if websocket fails
                 reconnection: true,
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000,
+                reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
+                reconnectionDelay: RECONNECT_DELAY,
                 timeout: 10000
             });
             
@@ -144,6 +153,7 @@ function initializeSocket() {
                 console.log('Socket connected:', socket.id);
                 setStatus('connected');
                 isWebSocketMode = true;
+                reconnectAttempts = 0;
                 
                 // Join session room if we have a session
                 if (currentSession.id) {
@@ -153,18 +163,47 @@ function initializeSocket() {
                 addTerminalText('🔌 Connected using WebSockets for real-time interaction', 'system');
             });
             
-            socket.on('disconnect', () => {
-                console.log('Socket disconnected');
+            socket.on('disconnect', (reason) => {
+                console.log('Socket disconnected:', reason);
                 setStatus('disconnected');
+                
+                // If the disconnect was not initiated by the client, try to reconnect
+                if (reason === 'io server disconnect' || reason === 'transport close') {
+                    // The server forcibly closed the connection, try to reconnect manually
+                    setTimeout(() => {
+                        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                            reconnectAttempts++;
+                            socket.connect();
+                            addTerminalText(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`, 'system');
+                        } else {
+                            isWebSocketMode = false;
+                            addTerminalText('Could not reconnect to WebSocket server. Falling back to HTTP mode.', 'warning');
+                        }
+                    }, RECONNECT_DELAY);
+                }
             });
             
             socket.on('connect_error', (error) => {
                 console.error('Socket connection error:', error);
                 setStatus('error');
-                isWebSocketMode = false;
                 
-                // Fall back to HTTP mode
-                addTerminalText('WebSocket connection failed, falling back to HTTP mode', 'warning');
+                if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                    isWebSocketMode = false;
+                    // Fall back to HTTP mode
+                    addTerminalText('WebSocket connection failed after multiple attempts, falling back to HTTP mode', 'warning');
+                } else {
+                    addTerminalText(`WebSocket connection error: ${error.message}. Will retry...`, 'warning');
+                }
+            });
+            
+            socket.on('reconnect_attempt', (attempt) => {
+                reconnectAttempts = attempt;
+                addTerminalText(`Reconnection attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS}...`, 'system');
+            });
+            
+            socket.on('reconnect_failed', () => {
+                isWebSocketMode = false;
+                addTerminalText('WebSocket reconnection failed, falling back to HTTP mode', 'warning');
             });
             
             // Terminal-specific events
@@ -645,6 +684,24 @@ async function executeCommand(command, retryCount = 0, isRetry = false) {
 
 // Add text to the terminal output
 function addTerminalText(text, type = 'output') {
+    // If terminalOutput doesn't exist, queue the message for when it's available
+    if (!terminalOutput) {
+        console.warn("Terminal output element not available yet. Message queued.");
+        
+        // Queue the message to be displayed once the DOM is fully loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => addTerminalText(text, type), 100);
+        });
+        return;
+    }
+    
+    // Sanitize text to prevent XSS when using innerHTML
+    const sanitizeHTML = (str) => {
+        const temp = document.createElement('div');
+        temp.textContent = str;
+        return temp.innerHTML;
+    };
+    
     const entryDiv = document.createElement('div');
     entryDiv.className = `command-entry ${type}`;
     
@@ -663,7 +720,14 @@ function addTerminalText(text, type = 'output') {
         // For streaming output (WebSockets), append to the last output element if it exists
         const lastEntry = terminalOutput.lastElementChild;
         if (lastEntry && lastEntry.classList.contains('output-stream')) {
-            lastEntry.textContent += text;
+            // Append text, ensuring we don't grow the DOM element too large
+            const currentText = lastEntry.textContent;
+            // If output is getting too large, trim it to avoid performance issues
+            if (currentText.length > 100000) {
+                lastEntry.textContent = currentText.slice(-50000) + text;
+            } else {
+                lastEntry.textContent += text;
+            }
             
             // Scroll to bottom
             terminalOutput.scrollTop = terminalOutput.scrollHeight;
@@ -672,15 +736,33 @@ function addTerminalText(text, type = 'output') {
         
         // Otherwise create a new output element
         entryDiv.textContent = text;
+    } else if (type === 'error' || type === 'warning') {
+        // For errors and warnings, make sure they stand out
+        entryDiv.textContent = text;
+        entryDiv.setAttribute('role', 'alert');
+        entryDiv.setAttribute('aria-live', 'assertive');
     } else {
         // Special handling for different output types
-        entryDiv.innerHTML = text;
+        // Use textContent for most types to prevent XSS
+        if (type === 'help-header' || type === 'help-category' || type === 'help-command' || 
+            type === 'help-tip' || type === 'welcome' || type === 'system' || type === 'example') {
+            entryDiv.textContent = text;
+        } else {
+            // For backwards compatibility with existing code that uses HTML
+            entryDiv.innerHTML = sanitizeHTML(text);
+        }
     }
     
     terminalOutput.appendChild(entryDiv);
     
     // Scroll to bottom
     terminalOutput.scrollTop = terminalOutput.scrollHeight;
+    
+    // Performance optimization: remove old entries if there are too many
+    const maxEntries = 1000;
+    while (terminalOutput.childElementCount > maxEntries) {
+        terminalOutput.removeChild(terminalOutput.firstChild);
+    }
 }
 
 // Socket.IO-specific event handlers
@@ -1002,4 +1084,121 @@ document.addEventListener('keypress', (e) => {
     if (tagName !== 'input' && tagName !== 'textarea' && !isExecuting) {
         commandInput.focus();
     }
+});
+
+// Handle mobile-specific features when DOM is fully loaded
+document.addEventListener('DOMContentLoaded', function() {
+    // Setup mobile error display
+    const mobileErrorDisplay = document.getElementById('mobile-error-display');
+    const mobileErrorMessage = document.getElementById('mobile-error-message');
+    const mobileErrorDismiss = document.getElementById('mobile-error-dismiss');
+    
+    if (mobileErrorDismiss) {
+        mobileErrorDismiss.addEventListener('click', function() {
+            mobileErrorDisplay.style.display = 'none';
+        });
+    }
+    
+    // Function to show mobile-friendly error messages
+    window.showMobileError = function(message) {
+        if (mobileErrorDisplay && mobileErrorMessage) {
+            mobileErrorMessage.textContent = message;
+            mobileErrorDisplay.style.display = 'flex';
+            
+            // Auto-hide after 10 seconds
+            setTimeout(function() {
+                mobileErrorDisplay.style.display = 'none';
+            }, 10000);
+        }
+    };
+    
+    // Setup mobile key modifiers
+    const keyModifiers = document.querySelectorAll('.keyboard-modifier');
+    if (keyModifiers) {
+        keyModifiers.forEach(button => {
+            let isActive = false;
+            
+            button.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                
+                // Toggle active state
+                isActive = !isActive;
+                if (isActive) {
+                    button.classList.add('active');
+                } else {
+                    button.classList.remove('active');
+                }
+                
+                // Focus the command input
+                commandInput.focus();
+            });
+        });
+    }
+    
+    // Setup mobile actions
+    const mobileActions = document.querySelectorAll('.mobile-action');
+    if (mobileActions) {
+        mobileActions.forEach(button => {
+            button.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                
+                const action = this.getAttribute('data-action');
+                
+                switch(action) {
+                    case 'clear':
+                        clearTerminal();
+                        break;
+                    case 'keyboard':
+                        // Show mobile keyboard by focusing input
+                        commandInput.focus();
+                        break;
+                    default:
+                        console.log('Unknown mobile action:', action);
+                }
+            });
+        });
+    }
+    
+    // Detect if this is a mobile device
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    if (isMobile) {
+        // Add mobile-specific class to body for CSS targeting
+        document.body.classList.add('mobile-device');
+        
+        // Add touch event handlers for better mobile experience
+        const terminalContainer = document.querySelector('.terminal-container');
+        if (terminalContainer) {
+            // Enable momentum scrolling
+            terminalContainer.style.webkitOverflowScrolling = 'touch';
+            
+            // Double tap to focus input
+            let lastTap = 0;
+            terminalContainer.addEventListener('touchend', function(e) {
+                const currentTime = new Date().getTime();
+                const tapLength = currentTime - lastTap;
+                
+                if (tapLength < 300 && tapLength > 0) {
+                    // Double tap detected
+                    commandInput.focus();
+                    e.preventDefault();
+                }
+                
+                lastTap = currentTime;
+            });
+        }
+    }
+    
+    // Global error handler - show user-friendly errors on mobile
+    window.addEventListener('error', function(e) {
+        console.error('Global error:', e.message);
+        
+        if (isMobile && window.showMobileError) {
+            window.showMobileError('An error occurred: ' + e.message);
+        }
+        
+        // Don't prevent default so browser still handles the error
+    });
 });
