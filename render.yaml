@@ -2,16 +2,17 @@ services:
   - type: web
     name: terminal-server
     env: docker
-    dockerfilePath: ./Dockerfile.multi-user
+    dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: free  # Explicitly set to free tier
     # Add startup delay to ensure server is running before health checks
+    startCommand: /entrypoint.sh
   
     envVars:
       - key: DEBUG
         value: false
       - key: PORT
-        value: 8080  # Try a different port than 3000 which might be restricted
+        value: 3000  # Use original port 3000 for Socket.IO compatibility
       - key: SESSION_TIMEOUT
         value: 3600  # 1 hour in seconds
       - key: USE_AUTH
