@@ -4,6 +4,30 @@ set -e
 
 echo "Initializing container-based terminal server..."
 
+# Start a simple server immediately on the required port 
+# This ensures Render detects an open port during initial health checks
+echo "Starting temporary server on port 3000..."
+python3 -c "
+import socket, threading, time, os
+def handle_conn(conn):
+    conn.send(b'HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nContent-Length: 19\\r\\n\\r\\nServer initializing.')
+    conn.close()
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('0.0.0.0', int(os.environ.get('PORT', 3000))))
+    s.listen(5)
+    print('Temporary server listening on port ' + str(os.environ.get('PORT', 3000)))
+    threading.Thread(target=lambda: [
+        handle_conn(conn) for conn, _ in iter(lambda: s.accept(), None)
+    ], daemon=True).start()
+except Exception as e:
+    print('Failed to start temporary server:', e)
+" &
+TEMP_SERVER_PID=$!
+# Give temporary server time to start
+sleep 2
+
 # Check if Docker socket is accessible
 if [ ! -S /var/run/docker.sock ]; then
     echo "WARNING: Docker socket not found. Container mode will be disabled."
@@ -42,10 +66,16 @@ chmod 777 logs user_data
 # Print configuration
 echo "Server Configuration:"
 echo "---------------------"
+echo "PORT: $PORT" 
 echo "USE_CONTAINERS: $USE_CONTAINERS"
 echo "MAX_CONTAINERS: $MAX_CONTAINERS"
 echo "USERS_PER_CONTAINER: $USERS_PER_CONTAINER"
 echo "---------------------"
+echo "Network information:"
+echo "--------------------"
+ip addr || echo "ip command not available"
+netstat -tulpn || echo "netstat command not available"
+echo "--------------------"
 
 # Set startup message
 cat > user_data/welcome.txt << 'EOL'
@@ -65,11 +95,17 @@ Try these commands:
 Happy coding!
 EOL
 
-# Start the server
-echo "Starting server..."
+# Stop the temporary server
+if [ -n "$TEMP_SERVER_PID" ]; then
+    echo "Stopping temporary server..."
+    kill $TEMP_SERVER_PID || true
+fi
 
-# Use Gunicorn for production
-exec gunicorn --bind 0.0.0.0:3000 \
+# Start the server
+echo "Starting server on 0.0.0.0:${PORT:-3000}..."
+
+# Use Gunicorn for production with socket optimization
+exec gunicorn --bind "0.0.0.0:${PORT:-3000}" \
     --workers 4 \
     --threads 2 \
     --worker-class eventlet \

@@ -2,9 +2,11 @@ services:
   - type: web
     name: terminal-server
     env: docker
-    dockerfilePath: ./Dockerfile.multi-user
+    dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: free  # Explicitly set to free tier
+    # Add startup delay to ensure server is running before health checks
+    startCommand: sleep 15 && /entrypoint.sh
   
     envVars:
       - key: DEBUG
