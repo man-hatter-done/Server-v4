@@ -3,96 +3,969 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>iOS Terminal Web Interface</title>
-    <link rel="stylesheet" href="style.css">
+    <title>iOS Terminal Server - API Documentation</title>
+    <style>
+        :root {
+            --primary-color: #4A90E2;
+            --secondary-color: #50E3C2;
+            --dark-color: #2C3E50;
+            --light-color: #F5F7FA;
+            --accent-color: #FF5A5F;
+            --code-bg: #2d2d2d;
+            --code-color: #f8f8f2;
+            --border-color: #ddd;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background-color: var(--light-color);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 2rem 0;
+            text-align: center;
+            margin-bottom: 2rem;
+            border-radius: 5px;
+        }
+        
+        h1 {
+            margin: 0;
+            font-size: 2.5rem;
+        }
+        
+        h2 {
+            color: var(--primary-color);
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 0.5rem;
+            margin-top: 2rem;
+        }
+        
+        h3 {
+            color: var(--dark-color);
+            margin-top: 1.5rem;
+        }
+        
+        .main-nav {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+            overflow: hidden;
+        }
+        
+        .main-nav ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-wrap: wrap;
+        }
+        
+        .main-nav li {
+            margin: 0;
+        }
+        
+        .main-nav a {
+            display: block;
+            padding: 1rem 1.5rem;
+            color: var(--dark-color);
+            text-decoration: none;
+            font-weight: 500;
+            transition: background-color 0.3s;
+        }
+        
+        .main-nav a:hover {
+            background-color: #f5f5f5;
+            color: var(--primary-color);
+        }
+        
+        .main-nav a.active {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .content {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 2rem;
+        }
+        
+        .endpoint {
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .endpoint:last-child {
+            border-bottom: none;
+        }
+        
+        .method {
+            display: inline-block;
+            padding: 0.3rem 0.7rem;
+            border-radius: 3px;
+            font-family: monospace;
+            font-weight: bold;
+            margin-right: 0.5rem;
+        }
+        
+        .get {
+            background-color: #61affe;
+            color: white;
+        }
+        
+        .post {
+            background-color: #49cc90;
+            color: white;
+        }
+        
+        .delete {
+            background-color: #f93e3e;
+            color: white;
+        }
+        
+        .path {
+            font-family: monospace;
+            font-size: 1.1rem;
+        }
+        
+        .description {
+            margin-top: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        pre {
+            background-color: var(--code-bg);
+            color: var(--code-color);
+            padding: 1rem;
+            border-radius: 3px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+        
+        code {
+            font-family: 'Courier New', Courier, monospace;
+        }
+        
+        .params {
+            margin-top: 1rem;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        th {
+            background-color: #f5f5f5;
+            color: var(--dark-color);
+        }
+        
+        .button {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: var(--primary-color);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 500;
+            transition: background-color 0.3s;
+            margin-top: 1rem;
+        }
+        
+        .button:hover {
+            background-color: #3c7bc0;
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding: 1rem 0;
+            color: #888;
+            font-size: 0.9rem;
+        }
+        
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .main-nav ul {
+                flex-direction: column;
+            }
+            
+            .main-nav a {
+                padding: 0.8rem 1rem;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>iOS Terminal</h1>
-            <p>Test your commands directly in the browser</p>
-        </div>
+        <header>
+            <h1>iOS Terminal Server</h1>
+            <p>API Documentation and Developer Guide</p>
+        </header>
         
-        <div class="terminal-container">
-            <div id="terminal-output"></div>
-            <div class="input-line">
-                <span class="prompt">$ </span>
-                <input type="text" id="command-input" placeholder="Enter command..." autofocus>
-            </div>
-            <!-- Enhanced fix for PointerEvent bug: prevent clicks from directly executing -->
-            <script>
-                // Apply fix immediately to prevent race conditions
-                (function() {
-                    const terminalContainer = document.querySelector('.terminal-container');
-                    const terminalOutput = document.getElementById('terminal-output');
-                    const commandInput = document.getElementById('command-input');
-                    
-                    // Fix terminal container clicks - capture phase to get before other handlers
-                    if (terminalContainer) {
-                        terminalContainer.addEventListener('click', function(event) {
-                            console.log("Terminal container clicked");
-                            event.stopPropagation();
-                            if (commandInput) commandInput.focus();
-                        }, true); // true = use capture phase
-                    }
-                    
-                    // Additional protection for terminal output
-                    if (terminalOutput) {
-                        terminalOutput.addEventListener('click', function(event) {
-                            console.log("Terminal output clicked");
-                            event.stopPropagation();
-                            event.preventDefault();
-                            if (commandInput) commandInput.focus();
-                        }, true); // true = use capture phase
-                    }
-                    
-                    // Ensure command input is never set to [object PointerEvent]
-                    if (commandInput) {
-                        const originalValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-                        Object.defineProperty(commandInput, 'value', {
-                            get: function() {
-                                return originalValue.get.call(this);
-                            },
-                            set: function(v) {
-                                if (typeof v === 'string' && v.includes('[object PointerEvent]')) {
-                                    console.error('Prevented setting input to PointerEvent');
-                                    return;
-                                }
-                                originalValue.set.call(this, v);
-                            }
-                        });
-                    }
-                })();
-            </script>
-        </div>
+        <nav class="main-nav">
+            <ul>
+                <li><a href="#introduction" class="active">Introduction</a></li>
+                <li><a href="#installation">Installation</a></li>
+                <li><a href="#ios-integration">iOS Integration</a></li>
+                <li><a href="#websocket-api">WebSocket API</a></li>
+                <li><a href="#rest-api">REST API</a></li>
+                <li><a href="#sessions">Sessions</a></li>
+                <li><a href="#terminal">Terminal</a></li>
+                <li><a href="#file-management">File Management</a></li>
+                <li><a href="#deployment">Deployment</a></li>
+                <li><a href="/ws">Live Terminal</a></li>
+            </ul>
+        </nav>
         
-        <div class="info-panel">
-            <div class="session-info">
-                <h3>Session Info</h3>
-                <p>Session ID: <span id="session-id">Not connected</span></p>
-                <p>Created: <span id="session-created">-</span></p>
-                <p>Last Activity: <span id="session-last-activity">-</span></p>
-                <p>Expires In: <span id="session-expires">-</span></p>
-            </div>
-            <div class="actions">
-                <button id="new-session-btn">New Session</button>
-                <button id="clear-terminal-btn">Clear Terminal</button>
-                <button id="end-session-btn">End Session</button>
-            </div>
-        </div>
-    </div>
+        <div class="content">
+            <section id="introduction">
+                <h2>Introduction</h2>
+                <p>Welcome to the iOS Terminal Server documentation. This server provides a Linux terminal environment accessible via both WebSocket connections and REST API endpoints. It's designed to provide a seamless terminal experience in iOS applications.</p>
+                
+                <div>
+                    <h3>Key Features</h3>
+                    <ul>
+                        <li>Real-time terminal interaction via WebSockets</li>
+                        <li>RESTful API for command execution</li>
+                        <li>Session management for persistent connections</li>
+                        <li>File system operations (browse, upload, download)</li>
+                        <li>Container isolation for multi-user environments</li>
+                        <li>iOS-compatible interfaces with both HTTP and WebSocket support</li>
+                        <li>Support for offline mode with command queueing</li>
+                        <li>Low-latency command execution for responsive UX</li>
+                    </ul>
+                </div>
+                
+                <h3>Architecture Overview</h3>
+                <p>The iOS Terminal Server consists of these main components:</p>
+                <ul>
+                    <li><strong>Core Server</strong> - Flask-based HTTP and Socket.IO server</li>
+                    <li><strong>Session Manager</strong> - Handles user sessions and persistence</li>
+                    <li><strong>Command Executor</strong> - Executes commands in isolated environments</li>
+                    <li><strong>File Manager</strong> - Provides file system operations API</li>
+                    <li><strong>Container Pool</strong> - Manages container-based isolation (optional)</li>
+                </ul>
+                
+                <a href="/ws" class="button">Try the Live Terminal</a>
+            </section>
+            
+            <section id="installation">
+                <h2>Installation</h2>
+                <p>This section covers how to set up the iOS Terminal Server on your own infrastructure.</p>
+                
+                <h3>Prerequisites</h3>
+                <ul>
+                    <li>Python 3.8+ with pip</li>
+                    <li>Node.js 14+ (optional, for enhanced terminal features)</li>
+                    <li>Docker (optional, for container isolation)</li>
+                    <li>Linux environment (recommended) or macOS</li>
+                </ul>
+                
+                <h3>Basic Installation</h3>
+                <pre><code># Clone the repository
+git clone https://github.com/app-an-server-official/Server-v4.git
+cd Server-v4
+
+# Create a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the server
+python run.py</code></pre>
+
+                <h3>Docker Installation</h3>
+                <pre><code># Build and run with Docker
+docker build -t ios-terminal-server .
+docker run -p 3000:3000 ios-terminal-server</code></pre>
+
+                <h3>Docker Compose (Multi-User)</h3>
+                <pre><code># Run with Docker Compose for multi-user setup
+docker-compose -f docker-compose-multi-user.yml up -d</code></pre>
+                
+                <h3>Configuration Options</h3>
+                <p>The server can be configured using environment variables:</p>
+                <table>
+                    <tr>
+                        <th>Variable</th>
+                        <th>Description</th>
+                        <th>Default</th>
+                    </tr>
+                    <tr>
+                        <td>PORT</td>
+                        <td>Server port</td>
+                        <td>3000</td>
+                    </tr>
+                    <tr>
+                        <td>DEBUG</td>
+                        <td>Enable debug mode</td>
+                        <td>False</td>
+                    </tr>
+                    <tr>
+                        <td>SERVER_MODE</td>
+                        <td>socket or flask</td>
+                        <td>socket</td>
+                    </tr>
+                    <tr>
+                        <td>SESSION_TIMEOUT</td>
+                        <td>Session timeout in seconds</td>
+                        <td>3600</td>
+                    </tr>
+                    <tr>
+                        <td>USE_CONTAINERS</td>
+                        <td>Enable container isolation</td>
+                        <td>False</td>
+                    </tr>
+                    <tr>
+                        <td>MULTI_CONTAINER_MODE</td>
+                        <td>Enable multi-container mode</td>
+                        <td>False</td>
+                    </tr>
+                    <tr>
+                        <td>MAX_CONTAINERS</td>
+                        <td>Maximum number of containers</td>
+                        <td>10</td>
+                    </tr>
+                    <tr>
+                        <td>USERS_PER_CONTAINER</td>
+                        <td>Maximum users per container</td>
+                        <td>20</td>
+                    </tr>
+                </table>
+            </section>
+            
+            <section id="ios-integration">
+                <h2>iOS Integration</h2>
+                <p>This section covers how to integrate the server with your iOS application.</p>
+                
+                <h3>iOS Client Libraries</h3>
+                <p>We recommend using these libraries for iOS integration:</p>
+                <ul>
+                    <li><a href="https://github.com/socketio/socket.io-client-swift">Socket.IO-Client-Swift</a> - For WebSocket connections</li>
+                    <li><a href="https://github.com/Alamofire/Alamofire">Alamofire</a> - For HTTP API requests</li>
+                </ul>
+                
+                <h3>WebSocket Integration (Swift)</h3>
+                <pre><code>import SocketIO
+
+class TerminalManager {
+    private let manager: SocketManager
+    private let socket: SocketIOClient
+    private var sessionId: String?
     
-    <script>
-        // Set up a global monitor to prevent browser events from being used as commands
-        window.addEventListener('error', function(event) {
-            if (event.message && event.message.includes('[object PointerEvent]')) {
-                console.error('Prevented PointerEvent error:', event);
-                event.preventDefault();
-                alert('Error: Browser event detected as command. Please reload the page and try again.');
-                return false;
+    init(serverURL: URL) {
+        manager = SocketManager(socketURL: serverURL, config: [.log(true), .compress])
+        socket = manager.defaultSocket
+        
+        setupSocketEvents()
+    }
+    
+    private func setupSocketEvents() {
+        socket.on(clientEvent: .connect) { [weak self] data, ack in
+            print("Socket connected")
+            self?.createSession()
+        }
+        
+        socket.on("session_created") { [weak self] data, ack in
+            guard let data = data[0] as? [String: Any],
+                  let sessionId = data["sessionId"] as? String else { return }
+            
+            self?.sessionId = sessionId
+            print("Session created: \(sessionId)")
+        }
+        
+        socket.on("command_output") { data, ack in
+            guard let data = data[0] as? [String: Any],
+                  let output = data["output"] as? String else { return }
+            
+            print("Output: \(output)")
+            // Update UI with output
+        }
+        
+        socket.on("command_complete") { data, ack in
+            // Handle command completion
+        }
+        
+        socket.on("command_error") { data, ack in
+            // Handle command errors
+        }
+        
+        // Connect to the server
+        socket.connect()
+    }
+    
+    func createSession() {
+        socket.emit("create_session", ["userId": UIDevice.current.identifierForVendor?.uuidString ?? "ios-device"])
+    }
+    
+    func executeCommand(_ command: String) {
+        guard let sessionId = sessionId else {
+            print("No active session")
+            return
+        }
+        
+        socket.emit("execute_command", ["command": command, "session_id": sessionId])
+    }
+    
+    func disconnect() {
+        socket.disconnect()
+    }
+}</code></pre>
+                
+                <h3>HTTP REST API Integration (Swift)</h3>
+                <pre><code>import Alamofire
+
+class TerminalRESTClient {
+    private let baseURL: URL
+    private var sessionId: String?
+    
+    init(baseURL: URL) {
+        self.baseURL = baseURL
+    }
+    
+    func createSession(completion: @escaping (Result<String, Error>) -> Void) {
+        let url = baseURL.appendingPathComponent("create-session")
+        
+        AF.request(url, method: .post, parameters: ["userId": UIDevice.current.identifierForVendor?.uuidString ?? "ios-device"],
+                   encoding: JSONEncoding.default)
+            .validate()
+            .responseDecodable(of: SessionResponse.self) { response in
+                switch response.result {
+                case .success(let sessionResponse):
+                    self.sessionId = sessionResponse.sessionId
+                    completion(.success(sessionResponse.sessionId))
+                case .failure(let error):
+                    completion(.failure(error))
+                }
             }
-        });
-    </script>
-    <script src="terminal.js"></script>
+    }
+    
+    func executeCommand(_ command: String, completion: @escaping (Result<CommandResponse, Error>) -> Void) {
+        guard let sessionId = sessionId else {
+            completion(.failure(NSError(domain: "TerminalError", code: 1, userInfo: [NSLocalizedDescriptionKey: "No active session"])))
+            return
+        }
+        
+        let url = baseURL.appendingPathComponent("execute-command")
+        
+        let headers: HTTPHeaders = [
+            "X-Session-Id": sessionId,
+            "Content-Type": "application/json"
+        ]
+        
+        AF.request(url, method: .post, parameters: ["command": command],
+                   encoding: JSONEncoding.default, headers: headers)
+            .validate()
+            .responseDecodable(of: CommandResponse.self) { response in
+                switch response.result {
+                case .success(let commandResponse):
+                    completion(.success(commandResponse))
+                case .failure(let error):
+                    completion(.failure(error))
+                }
+            }
+    }
+    
+    func endSession(completion: @escaping (Bool) -> Void) {
+        guard let sessionId = sessionId else {
+            completion(false)
+            return
+        }
+        
+        let url = baseURL.appendingPathComponent("session")
+        
+        let headers: HTTPHeaders = [
+            "X-Session-Id": sessionId
+        ]
+        
+        AF.request(url, method: .delete, headers: headers)
+            .validate()
+            .response { response in
+                completion(response.error == nil)
+            }
+    }
+}
+
+// Response models
+struct SessionResponse: Decodable {
+    let sessionId: String
+    let created: String
+    let expiresIn: Int
+}
+
+struct CommandResponse: Decodable {
+    let output: String
+    let exitCode: Int
+    let workingDirectory: String?
+}</code></pre>
+                
+                <h3>iOS UI Integration</h3>
+                <p>Here's an example of how to create a simple terminal UI in SwiftUI:</p>
+                <pre><code>import SwiftUI
+
+struct TerminalView: View {
+    @StateObject private var viewModel = TerminalViewModel()
+    @State private var commandInput: String = ""
+    
+    var body: some View {
+        VStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(viewModel.outputLines, id: \.id) { line in
+                        Text(line.text)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundColor(line.isCommand ? .green : .white)
+                            .padding(.vertical, 2)
+                    }
+                }
+                .padding()
+            }
+            .background(Color.black)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            
+            HStack {
+                Text("$")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundColor(.green)
+                
+                TextField("Enter command", text: $commandInput)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundColor(.white)
+                    .submitLabel(.go)
+                    .onSubmit {
+                        if !commandInput.isEmpty {
+                            viewModel.executeCommand(commandInput)
+                            commandInput = ""
+                        }
+                    }
+            }
+            .padding()
+            .background(Color.black)
+        }
+        .onAppear {
+            viewModel.connect()
+        }
+        .onDisappear {
+            viewModel.disconnect()
+        }
+    }
+}
+
+class TerminalViewModel: ObservableObject {
+    @Published var outputLines: [OutputLine] = []
+    private var terminalManager: TerminalManager?
+    
+    struct OutputLine: Identifiable {
+        let id = UUID()
+        let text: String
+        let isCommand: Bool
+    }
+    
+    func connect() {
+        guard let url = URL(string: "http://your-server-url:3000") else { return }
+        
+        terminalManager = TerminalManager(serverURL: url)
+        
+        // Add welcome message
+        addOutput("Terminal connected. Type 'help' for available commands.", isCommand: false)
+    }
+    
+    func executeCommand(_ command: String) {
+        addOutput(command, isCommand: true)
+        terminalManager?.executeCommand(command)
+    }
+    
+    func addOutput(_ text: String, isCommand: Bool) {
+        DispatchQueue.main.async {
+            self.outputLines.append(OutputLine(text: text, isCommand: isCommand))
+        }
+    }
+    
+    func disconnect() {
+        terminalManager?.disconnect()
+    }
+}</code></pre>
+            </section>
+            
+            <section id="websocket-api">
+                <h2>WebSocket API</h2>
+                <p>The WebSocket API provides real-time, bidirectional communication between the client and server, making it ideal for terminal interactions.</p>
+                
+                <div class="endpoint">
+                    <span class="method">WS</span>
+                    <span class="path">/socket.io/</span>
+                    <div class="description">Socket.IO endpoint for real-time terminal communication</div>
+                    
+                    <h3>Events</h3>
+                    <table>
+                        <tr>
+                            <th>Event</th>
+                            <th>Direction</th>
+                            <th>Description</th>
+                        </tr>
+                        <tr>
+                            <td><code>connect</code></td>
+                            <td>Server ↔ Client</td>
+                            <td>Establishes a Socket.IO connection</td>
+                        </tr>
+                        <tr>
+                            <td><code>create_session</code></td>
+                            <td>Client → Server</td>
+                            <td>Creates a new terminal session</td>
+                        </tr>
+                        <tr>
+                            <td><code>session_created</code></td>
+                            <td>Server → Client</td>
+                            <td>Confirms a session was created with details</td>
+                        </tr>
+                        <tr>
+                            <td><code>execute_command</code></td>
+                            <td>Client → Server</td>
+                            <td>Executes a command in the terminal</td>
+                        </tr>
+                        <tr>
+                            <td><code>command_output</code></td>
+                            <td>Server → Client</td>
+                            <td>Streams command output in real-time</td>
+                        </tr>
+                        <tr>
+                            <td><code>command_complete</code></td>
+                            <td>Server → Client</td>
+                            <td>Signals command execution completion</td>
+                        </tr>
+                        <tr>
+                            <td><code>command_error</code></td>
+                            <td>Server → Client</td>
+                            <td>Reports command execution errors</td>
+                        </tr>
+                        <tr>
+                            <td><code>end_session</code></td>
+                            <td>Client → Server</td>
+                            <td>Terminates the current session</td>
+                        </tr>
+                    </table>
+                    
+                    <h3>Example</h3>
+                    <pre><code>// Connect to WebSocket
+const socket = io();
+
+// Create a new session
+socket.emit('create_session', { userId: 'user123' });
+
+// Listen for session creation
+socket.on('session_created', (data) => {
+    console.log('Session created:', data.sessionId);
+});
+
+// Execute a command
+socket.emit('execute_command', {
+    command: 'ls -la',
+    session_id: sessionId
+});
+
+// Receive command output
+socket.on('command_output', (data) => {
+    console.log('Output:', data.output);
+});
+
+// Command completion
+socket.on('command_complete', (data) => {
+    console.log('Command completed with exit code:', data.exitCode);
+});</code></pre>
+                </div>
+            </section>
+            
+            <section id="rest-api">
+                <h2>REST API</h2>
+                <p>The REST API provides HTTP endpoints for session management and command execution.</p>
+                
+                <div class="endpoint">
+                    <span class="method post">POST</span>
+                    <span class="path">/create-session</span>
+                    <div class="description">Creates a new terminal session</div>
+                    
+                    <h3>Request Body</h3>
+                    <pre><code>{
+    "userId": "user123"  // Optional user identifier
+}</code></pre>
+                    
+                    <h3>Response</h3>
+                    <pre><code>{
+    "sessionId": "44f74278-d7d8-4423-bed9-982a0f339c52",
+    "created": "2025-04-10T20:15:30.123Z",
+    "expiresIn": 3600
+}</code></pre>
+                </div>
+                
+                <div class="endpoint">
+                    <span class="method post">POST</span>
+                    <span class="path">/execute-command</span>
+                    <div class="description">Executes a command in the terminal session</div>
+                    
+                    <h3>Headers</h3>
+                    <pre><code>X-Session-Id: 44f74278-d7d8-4423-bed9-982a0f339c52</code></pre>
+                    
+                    <h3>Request Body</h3>
+                    <pre><code>{
+    "command": "ls -la"
+}</code></pre>
+                    
+                    <h3>Response</h3>
+                    <pre><code>{
+    "output": "total 32\ndrwxr-xr-x 4 user user 4096 Apr 10 20:15 .\ndrwxr-xr-x 3 user user 4096 Apr 10 20:15 ..\n-rw-r--r-- 1 user user    0 Apr 10 20:15 file.txt",
+    "exitCode": 0,
+    "workingDirectory": "/home/user"
+}</code></pre>
+                </div>
+                
+                <div class="endpoint">
+                    <span class="method get">GET</span>
+                    <span class="path">/session</span>
+                    <div class="description">Gets information about the current session</div>
+                    
+                    <h3>Headers</h3>
+                    <pre><code>X-Session-Id: 44f74278-d7d8-4423-bed9-982a0f339c52</code></pre>
+                    
+                    <h3>Response</h3>
+                    <pre><code>{
+    "sessionId": "44f74278-d7d8-4423-bed9-982a0f339c52",
+    "created": "2025-04-10T20:15:30.123Z",
+    "lastActivity": "2025-04-10T20:20:45.456Z",
+    "expiresIn": 3300
+}</code></pre>
+                </div>
+                
+                <div class="endpoint">
+                    <span class="method delete">DELETE</span>
+                    <span class="path">/session</span>
+                    <div class="description">Terminates the current session</div>
+                    
+                    <h3>Headers</h3>
+                    <pre><code>X-Session-Id: 44f74278-d7d8-4423-bed9-982a0f339c52</code></pre>
+                    
+                    <h3>Response</h3>
+                    <pre><code>{
+    "success": true,
+    "message": "Session terminated"
+}</code></pre>
+                </div>
+            </section>
+            
+            <section id="sessions">
+                <h2>Session Management</h2>
+                <p>The server manages terminal sessions to maintain state between requests. Each session has its own isolated environment and file system.</p>
+                
+                <h3>Session Lifecycle</h3>
+                <ol>
+                    <li><strong>Creation</strong>: Sessions are created via WebSocket or REST API</li>
+                    <li><strong>Authentication</strong>: Optional user identification can be provided</li>
+                    <li><strong>Activity</strong>: Sessions remain active as long as commands are executed</li>
+                    <li><strong>Expiration</strong>: Sessions expire after a period of inactivity (default: 1 hour)</li>
+                    <li><strong>Termination</strong>: Sessions can be explicitly terminated via API</li>
+                </ol>
+                
+                <h3>Session Persistence</h3>
+                <p>Session data is stored in memory by default, with optional persistence to disk for container-based deployments. Each session maintains:</p>
+                <ul>
+                    <li>Unique session ID</li>
+                    <li>User home directory with all created files</li>
+                    <li>Command history</li>
+                    <li>Working directory state</li>
+                    <li>Environment variables</li>
+                </ul>
+            </section>
+            
+            <section id="file-management">
+                <h2>File Management</h2>
+                <p>The server provides API endpoints for managing files within a session's environment.</p>
+                
+                <div class="endpoint">
+                    <span class="method get">GET</span>
+                    <span class="path">/files</span>
+                    <div class="description">Lists files in a directory</div>
+                    
+                    <h3>Headers</h3>
+                    <pre><code>X-Session-Id: 44f74278-d7d8-4423-bed9-982a0f339c52</code></pre>
+                    
+                    <h3>Query Parameters</h3>
+                    <table>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                        <tr>
+                            <td>path</td>
+                            <td>string</td>
+                            <td>Directory path relative to user's home (default: "")</td>
+                        </tr>
+                    </table>
+                    
+                    <h3>Response</h3>
+                    <pre><code>{
+    "path": "/",
+    "files": [
+        {
+            "name": "Documents",
+            "type": "directory",
+            "size": 4096,
+            "modified": "2025-04-10T20:15:30.123Z"
+        },
+        {
+            "name": "file.txt",
+            "type": "file",
+            "size": 1024,
+            "modified": "2025-04-10T20:16:45.789Z"
+        }
+    ]
+}</code></pre>
+                </div>
+                
+                <h3>Additional File Operations</h3>
+                <ul>
+                    <li><strong>Upload Files</strong>: POST to /files with multipart/form-data</li>
+                    <li><strong>Download Files</strong>: GET from /files/download?path=file.txt</li>
+                    <li><strong>Create Directory</strong>: POST to /files/directory</li>
+                    <li><strong>Delete Files</strong>: DELETE to /files?path=file.txt</li>
+                </ul>
+            </section>
+            
+            <section id="terminal">
+                <h2>Terminal Features</h2>
+                <p>The server provides a full Linux terminal environment with the following features:</p>
+                
+                <h3>Supported Functionality</h3>
+                <ul>
+                    <li><strong>Command Execution</strong>: Run standard Linux/Unix commands</li>
+                    <li><strong>Interactive Programs</strong>: Run interactive tools like vim, nano, etc.</li>
+                    <li><strong>Programming Languages</strong>: Python, Node.js, and other interpreters</li>
+                    <li><strong>Package Installation</strong>: Install packages via pip, npm, etc.</li>
+                    <li><strong>File Operations</strong>: Create, edit, and manage files</li>
+                </ul>
+                
+                <h3>Terminal Features for iOS Integration</h3>
+                <ul>
+                    <li><strong>Command History</strong>: Server maintains command history per session</li>
+                    <li><strong>Auto-completion</strong>: Basic tab completion for commands and paths</li>
+                    <li><strong>Error Handling</strong>: Detailed error messages for debugging</li>
+                    <li><strong>Command Timeout</strong>: Detection and handling of long-running commands</li>
+                    <li><strong>Offline Mode</strong>: Queue commands when offline, execute when connection restored</li>
+                    <li><strong>Background Execution</strong>: Long-running commands continue in background</li>
+                </ul>
+                
+                <h3>Live Terminal</h3>
+                <p>For testing and development, you can access a live terminal interface:</p>
+                <a href="/ws" class="button">Launch WebSocket Terminal</a>
+            </section>
+            
+            <section id="deployment">
+                <h2>Deployment</h2>
+                <p>This section covers how to deploy the iOS Terminal Server to various environments.</p>
+                
+                <h3>Environment Options</h3>
+                <div class="endpoint">
+                    <h4>Local Development</h4>
+                    <pre><code># Run directly
+python run.py
+
+# Run with environment variables
+PORT=8080 DEBUG=true python run.py</code></pre>
+                </div>
+                
+                <div class="endpoint">
+                    <h4>Docker Deployment</h4>
+                    <pre><code># Simple deployment
+docker run -p 3000:3000 ios-terminal-server
+
+# With environment variables
+docker run -p 3000:3000 \
+  -e PORT=3000 \
+  -e USE_CONTAINERS=true \
+  -e MAX_CONTAINERS=20 \
+  ios-terminal-server</code></pre>
+                </div>
+                
+                <div class="endpoint">
+                    <h4>Render.com Deployment</h4>
+                    <p>This server is optimized for deployment on Render.com:</p>
+                    <ol>
+                        <li>Create a new Web Service on Render</li>
+                        <li>Link to your GitHub repository</li>
+                        <li>Set the build command: <code>pip install -r requirements.txt</code></li>
+                        <li>Set the start command: <code>python run.py</code></li>
+                        <li>Set environment variables as needed</li>
+                    </ol>
+                    <p>See <a href="DEPLOYMENT.md">DEPLOYMENT.md</a> for detailed instructions.</p>
+                </div>
+                
+                <div class="endpoint">
+                    <h4>AWS/DigitalOcean</h4>
+                    <pre><code># Install as a systemd service
+sudo cp ios-terminal.service /etc/systemd/system/
+sudo systemctl enable ios-terminal
+sudo systemctl start ios-terminal
+
+# Check status
+sudo systemctl status ios-terminal</code></pre>
+                </div>
+                
+                <h3>Security Considerations</h3>
+                <ul>
+                    <li><strong>HTTPS</strong>: Always use HTTPS in production</li>
+                    <li><strong>API Keys</strong>: Consider adding API key authentication for production</li>
+                    <li><strong>Container Isolation</strong>: Enable USE_CONTAINERS for multi-user environments</li>
+                    <li><strong>Resource Limits</strong>: Set appropriate memory and CPU limits</li>
+                    <li><strong>Firewall</strong>: Restrict access to the server port</li>
+                </ul>
+                
+                <h3>Monitoring and Maintenance</h3>
+                <ul>
+                    <li><strong>Logs</strong>: Server logs are available in the logs/ directory</li>
+                    <li><strong>Health Check</strong>: Access /health endpoint to check server status</li>
+                    <li><strong>Session Cleanup</strong>: Expired sessions are automatically cleaned up</li>
+                    <li><strong>Container Management</strong>: Containers are recycled periodically</li>
+                </ul>
+                
+                <h3>iOS App Considerations</h3>
+                <p>When deploying for use with iOS apps:</p>
+                <ul>
+                    <li>Ensure your server is accessible from mobile networks</li>
+                    <li>Configure App Transport Security (ATS) in your iOS app</li>
+                    <li>Implement a fallback mechanism for when the server is unreachable</li>
+                    <li>Consider using a CDN for static assets</li>
+                    <li>Implement rate limiting to prevent abuse</li>
+                </ul>
+            </section>
+        </div>
+        
+        <footer>
+            <p>iOS Terminal Server Documentation &copy; 2025</p>
+            <p><a href="https://github.com/app-an-server-official/Server-v4">GitHub Repository</a></p>
+        </footer>
+    </div>
 </body>
 </html>

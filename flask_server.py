@@ -1110,7 +1110,7 @@ def handle_execute_command(data):
 @app.route('/ws')
 @cached_response(timeout=3600)  # Cache for 1 hour
 def websocket_terminal():
-    """Serve WebSocket terminal interface"""
+    """Serve enhanced WebSocket terminal interface"""
     return send_file('static/socket-terminal.html')
 
 # Function to get file contents with caching
@@ -2169,8 +2169,8 @@ def get_session(session_id):
 @app.route('/')
 @cached_response(timeout=3600)  # Cache for 1 hour
 def index():
-    """Serve web terminal interface"""
-    return send_file('static/simple-terminal.html')
+    """Serve documentation page instead of terminal"""
+    return send_file('static/index.html')
 
 @app.route('/container-terminal')
 @cached_response(timeout=3600)  # Cache for 1 hour
