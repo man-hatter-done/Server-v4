@@ -17,7 +17,13 @@ from threading import Thread
 from flask_socketio import SocketIO
 
 # Create logs directory if it doesn't exist
-os.makedirs("logs", exist_ok=True)
+try:
+    os.makedirs("logs", exist_ok=True)
+    # Ensure directory has proper permissions
+    os.chmod("logs", 0o777)
+except Exception as e:
+    print(f"WARNING: Could not create or set permissions on logs directory: {e}")
+    print("The entrypoint.sh script should have already created this directory.")
 
 # Set up logging
 logging.basicConfig(
@@ -160,7 +166,30 @@ def run_server():
     
     # Import the app and socketio instance here after monkey patching
     try:
-        from flask_server import app, socketio
+        # Use a more robust import approach that handles common errors
+        try:
+            # First attempt to import the modules
+            import flask_server
+            # If successful, get the required objects
+            app = flask_server.app
+            socketio = flask_server.socketio
+            print("Successfully imported flask_server module")
+        except NameError as ne:
+            logger.critical(f"Name error importing flask_server: {str(ne)}")
+            print(f"ERROR: {str(ne)}")
+            # Try to determine which name is undefined
+            if "logger" in str(ne):
+                print("It appears the logger is being used before it's defined in flask_server.py")
+                print("Please ensure logger is defined at the top of flask_server.py")
+            sys.exit(1)
+        except ImportError as ie:
+            logger.critical(f"Import error: {str(ie)}")
+            print(f"ERROR: Could not import required modules: {str(ie)}")
+            sys.exit(1)
+        except AttributeError as ae:
+            logger.critical(f"Attribute error in flask_server: {str(ae)}")
+            print(f"ERROR: Flask server module is missing an attribute: {str(ae)}")
+            sys.exit(1)
         
         # Get port from environment or use default
         port = int(os.environ.get('PORT', 3000))
@@ -185,7 +214,9 @@ def run_server():
             allow_unsafe_werkzeug=True  # Allow running in production
         )
     except Exception as e:
-        logger.critical(f"Failed to start server: {e}")
+        logger.critical(f"Failed to start server: {str(e)}")
+        # Print the error to stderr as well for immediate visibility
+        print(f"ERROR: Failed to start server: {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":

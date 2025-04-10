@@ -2,6 +2,10 @@
 # Entrypoint script for Render deployment with Socket.IO support
 set -e
 
+# Create logs directory right at the start to avoid permission issues
+mkdir -p logs
+chmod 777 logs
+
 echo "Initializing terminal server with WebSocket support..."
 
 # Set PORT environment variable if not set
