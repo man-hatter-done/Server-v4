@@ -5,9 +5,7 @@ services:
     dockerfilePath: ./Dockerfile.multi-user
     dockerContext: .
     plan: free  # Explicitly set to free tier
-    scaling:
-      minInstances: 1
-      maxInstances: 1
+  
     envVars:
       - key: DEBUG
         value: false
