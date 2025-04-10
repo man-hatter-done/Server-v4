@@ -23,7 +23,35 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import select
 import io
 import eventlet
-from file_management import register_file_management_endpoints
+# Import file management with error handling
+try:
+    from file_management import register_file_management_endpoints
+    # Successful import
+except Exception as e:
+    # If import fails, log error and create a dummy function as fallback
+    print(f"ERROR importing file_management module: {e}")
+    def register_file_management_endpoints(app, get_session_func):
+        print("WARNING: Using dummy file_management module due to import error")
+        return None
+
+# Create logs directory if it doesn't exist
+os.makedirs("logs", exist_ok=True)
+
+# Initialize logging early to avoid undefined logger errors
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("logs/flask_server.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("flask_server")
+
+# Add initialization logging to help diagnose worker issues
+logger.info(f"Flask app initialization starting at {time.time()}")
+logger.info(f"Python version: {sys.version}")
+logger.info(f"System platform: {sys.platform}")
 
 # Initialize cache before anything else
 # In-memory cache for responses
@@ -105,22 +133,6 @@ else:
     import secrets
     app.config['SECRET_KEY'] = secrets.token_hex(32)
     logger.info("Generated random SECRET_KEY for this session")
-
-# Add initialization logging to help diagnose worker issues
-print(f"Flask app initialization starting at {time.time()}")
-print(f"Python version: {sys.version}")
-print(f"System platform: {sys.platform}")
-
-# Initialize logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("logs/flask_server.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("flask_server")
 
 # Set up error monitoring
 class ErrorMonitor:

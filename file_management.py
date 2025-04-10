@@ -6,10 +6,54 @@ These endpoints provide a RESTful interface for managing files and directories.
 import os
 import shutil
 import time
+import logging
 from datetime import datetime
 from functools import lru_cache
+import sys
+
+# Create a safe logging wrapper to prevent "logger not defined" errors
+def safe_log(level, message):
+    """Safely log a message without causing errors if logger isn't defined."""
+    try:
+        if level == 'error':
+            logging.getLogger("file_management").error(message)
+        elif level == 'warning':
+            logging.getLogger("file_management").warning(message)
+        elif level == 'info':
+            logging.getLogger("file_management").info(message)
+        elif level == 'debug':
+            logging.getLogger("file_management").debug(message)
+    except Exception as e:
+        # Fallback to printing if logging fails
+        print(f"LOG ({level}): {message}", file=sys.stderr)
+
+# Create logger or use the safe wrapper
+try:
+    logger = logging.getLogger("file_management")
+except Exception:
+    # Create a dummy logger that uses safe_log
+    class DummyLogger:
+        def warning(self, msg): safe_log('warning', msg)
+        def error(self, msg): safe_log('error', msg)
+        def info(self, msg): safe_log('info', msg)
+        def debug(self, msg): safe_log('debug', msg)
+    
+    logger = DummyLogger()
 from flask import jsonify, request, send_file, make_response
 from werkzeug.utils import secure_filename
+
+# Ensure we don't have undefined logger issues
+try:
+    logger
+except NameError:
+    # Fall back to a dummy logger if the real one isn't available
+    class DummyLogger:
+        def warning(self, msg): print(f"WARNING: {msg}")
+        def error(self, msg): print(f"ERROR: {msg}")
+        def info(self, msg): print(f"INFO: {msg}")
+        def debug(self, msg): pass
+    
+    logger = DummyLogger()
 
 # Path cache to avoid repeated disk stats for directories that rarely change
 # Keyed by (session_id, path) and stores the directory listing with a timestamp
