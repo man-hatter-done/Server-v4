@@ -2436,10 +2436,17 @@ def execute_command():
     """Execute a command in the user's session"""
     cmd_start_time = time.time()
     
+    # Comprehensive Debug Logging
+    logger.info(f"Execute command request received")
+    logger.info(f"Headers: {str(request.headers)}")
+    logger.info(f"Body: {str(request.data)}")
+    
     if USE_AUTH and not authenticate():
+        logger.warning("Authentication failed for execute-command")
         return jsonify({'error': 'Authentication failed'}), 401
         
     session_id = request.headers.get('X-Session-Id')
+    logger.info(f"Session ID from headers: {session_id}")
     
     # For compatibility with legacy clients
     if not session_id and not USE_AUTH:
@@ -2531,12 +2538,29 @@ def execute_command():
     data = request.json or {}
     command = data.get('command')
     
-    # Block any command that looks like a PointerEvent object
-    if isinstance(command, str) and "[object PointerEvent]" in command:
+    # Log received command and ensure it's a string
+    if command is None:
+        logger.warning(f"Null command received from session {session_id}")
+        return jsonify({'error': 'Command is required'}), 400
+        
+    if not isinstance(command, str):
+        logger.warning(f"Non-string command received: {type(command)} - {str(command)}")
+        try:
+            command = str(command)
+        except:
+            return jsonify({'error': 'Command must be a string'}), 400
+    
+    # Block PointerEvent objects but be more lenient on valid commands
+    if "[object " in command and "PointerEvent" in command:
         logger.warning(f"Blocked PointerEvent command: {command} from session {session_id}")
         return jsonify({'error': 'Invalid command format: PointerEvent object detected'}), 400
+        
+    # DEBUG: Log all commands to understand why they're failing
+    logger.info(f"Command received: '{command}' from session {session_id}")
     
-    if not command:
+    # More careful empty check
+    if not command or command.strip() == '':
+        logger.warning(f"Empty command received from session {session_id}")
         return jsonify({'error': 'Command is required'}), 400
     
     # Reset the last_accessed time to prevent timeout during command execution

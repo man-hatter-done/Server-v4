@@ -97,49 +97,37 @@ async function createNewSession() {
 
 // Execute command in the terminal session with retry capability
 async function executeCommand(command, retryCount = 0, isRetry = false) {
-    // CRITICAL FIX: Make sure command is a string to prevent issues with PointerEvent being passed
-    if (typeof command !== 'string') {
-        console.error('Invalid command type received:', typeof command);
-        if (command instanceof Event) {
-            console.error('Received an Event object instead of a command string');
-            addTerminalText('Error: Browser event detected instead of command text. This is a bug.', 'error');
+    console.log("executeCommand called with:", typeof command, command);
+    
+    // If a DOM event was passed directly, get command from input instead
+    if (command instanceof Event) {
+        console.error('Event object passed directly to executeCommand');
+        // Use the input value instead
+        command = commandInput.value.trim();
+        commandInput.value = ''; // Clear input
+        
+        if (!command) {
+            console.log('No command text found in input');
             return;
         }
-        // Try to convert to string if possible
+    }
+    
+    // Make sure command is a string to prevent issues with PointerEvent being passed
+    if (typeof command !== 'string') {
+        console.error('Invalid command type received:', typeof command);
         try {
             command = String(command);
         } catch (e) {
             console.error('Failed to convert command to string:', e);
-            return;
-        }
-    }
-    
-    // Additional check for object strings that might have slipped through
-    if (command && command.includes('[object ') && command.includes(']')) {
-        console.error('Command contains object reference:', command);
-        addTerminalText('Error: Invalid command format detected.', 'error');
-        return;
-    }
-    
-    // Prevent PointerEvent objects from being used as commands
-    if (typeof command !== 'string') {
-        console.error('Invalid command type:', typeof command);
-        if (command instanceof Event) {
-            console.error('Cannot execute Event object as command');
-            return;
-        }
-        
-        try {
-            command = String(command);
-        } catch (e) {
-            console.error('Failed to convert command to string');
+            addTerminalText('Error: Invalid command format', 'error');
             return;
         }
     }
     
     // Block any command that contains PointerEvent text
-    if (command.includes('[object PointerEvent]')) {
-        console.error('Blocked PointerEvent string from being executed');
+    if (command.includes('[object ') || command.includes('PointerEvent')) {
+        console.error('Blocked PointerEvent string from being executed:', command);
+        addTerminalText('Error: Invalid command format detected', 'error');
         return;
     }
     

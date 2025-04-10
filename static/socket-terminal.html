@@ -41,22 +41,80 @@
                     <div id="prompt-text" class="prompt-text">~ $</div>
                     <input id="command-input" type="text" class="command-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type commands here...">
                 </div>
-                <!-- Direct fix for PointerEvent bug -->
+                <!-- Enhanced fix for PointerEvent bug -->
                 <script>
                     // Immediately protect against PointerEvent issues
-                    document.addEventListener('DOMContentLoaded', function() {
-                        // Protect terminal container from passing click events as commands
+                    (function() {
+                        // Get all relevant elements
                         const terminalOutput = document.getElementById('terminal-output');
+                        const commandInput = document.getElementById('command-input');
+                        const terminal = document.querySelector('.terminal');
+                        
+                        // Override executeCommand if it exists to add debugging
+                        if (window.executeCommand) {
+                            console.log("Adding executeCommand protection wrapper");
+                            const originalExecuteCommand = window.executeCommand;
+                            window.executeCommand = function(cmd) {
+                                console.log('executeCommand called with:', typeof cmd, cmd);
+                                
+                                // Prevent event objects from being passed
+                                if (cmd instanceof Event) {
+                                    console.error('Prevented Event object execution');
+                                    return;
+                                }
+                                
+                                // Prevent object strings
+                                if (typeof cmd === 'string' && cmd.includes('[object ')) {
+                                    console.error('Prevented object string execution:', cmd);
+                                    return;
+                                }
+                                
+                                // Call original with validated command
+                                return originalExecuteCommand.apply(this, arguments);
+                            };
+                        }
+                        
+                        // Protect terminal output element - use capture phase to get first
                         if (terminalOutput) {
                             terminalOutput.addEventListener('click', function(e) {
+                                console.log("Terminal output clicked");
+                                e.stopPropagation();
+                                e.preventDefault(); 
+                                if (commandInput) commandInput.focus();
+                            }, true); // true = capture phase
+                        }
+                        
+                        // Also protect the main terminal container
+                        if (terminal) {
+                            terminal.addEventListener('click', function(e) {
+                                console.log("Terminal container clicked");
                                 e.stopPropagation();
                                 e.preventDefault();
-                                // Focus input instead
-                                const commandInput = document.getElementById('command-input');
                                 if (commandInput) commandInput.focus();
-                            });
+                            }, true); // true = capture phase
                         }
-                    });
+                        
+                        // Protect command input from being directly set to PointerEvent
+                        if (commandInput) {
+                            try {
+                                const originalValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+                                Object.defineProperty(commandInput, 'value', {
+                                    get: function() {
+                                        return originalValue.get.call(this);
+                                    },
+                                    set: function(v) {
+                                        if (typeof v === 'string' && (v.includes('[object ') || v.includes('PointerEvent'))) {
+                                            console.error('Prevented setting input value to:', v);
+                                            return;
+                                        }
+                                        originalValue.set.call(this, v);
+                                    }
+                                });
+                            } catch (e) {
+                                console.error('Error setting up input protection:', e);
+                            }
+                        }
+                    })();
                 </script>
             </div>
             
