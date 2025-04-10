@@ -128,6 +128,22 @@
             <input type="text" id="command-input" placeholder="Enter command..." autofocus>
         </div>
         
+        <!-- Direct fix for PointerEvent bug - prevent terminal clicks from executing as commands -->
+        <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                const terminalElement = document.getElementById('terminal');
+                if (terminalElement) {
+                    // Prevent clicks in terminal from being passed as commands
+                    terminalElement.addEventListener('click', function(event) {
+                        event.stopPropagation();
+                        // Focus input instead
+                        const commandInput = document.getElementById('command-input');
+                        if (commandInput) commandInput.focus();
+                    });
+                }
+            });
+        </script>
+        
         <div>
             <button id="execute-btn">Execute Command</button>
             <button id="clear-btn">Clear Terminal</button>
@@ -155,11 +171,28 @@
 
         // Initialize terminal
         document.addEventListener('DOMContentLoaded', function() {
-            // Event listeners
-            executeBtn.addEventListener('click', executeCommand);
-            clearBtn.addEventListener('click', clearTerminal);
-            newSessionBtn.addEventListener('click', createSession);
-            document.getElementById('file-browser-btn').addEventListener('click', function() {
+            // Event listeners - with explicit handler functions to prevent event passing
+            executeBtn.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                executeCommand(); // Call without passing the event
+            });
+            
+            clearBtn.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                clearTerminal();
+            });
+            
+            newSessionBtn.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                createSession();
+            });
+            
+            document.getElementById('file-browser-btn').addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
                 window.location.href = '/files-browser';
             });
             
@@ -220,6 +253,13 @@
 
         // Execute command with retry capability
         async function executeCommand(command = null, retryCount = 0) {
+            // Prevent PointerEvent objects from being used as commands
+            if (command instanceof Event) {
+                console.error('Event object passed to executeCommand. Ignoring.');
+                // Use command input value instead
+                command = null;
+            }
+            
             // Get command from input if not provided
             if (command === null) {
                 command = commandInput.value.trim();
@@ -227,6 +267,24 @@
                 if (retryCount === 0) {
                     commandInput.value = '';
                 }
+            }
+            
+            // Validate command is a string
+            if (typeof command !== 'string') {
+                try {
+                    command = String(command);
+                } catch (e) {
+                    console.error('Invalid command type:', typeof command);
+                    addOutput('Error: Invalid command format', 'error-text');
+                    return;
+                }
+            }
+            
+            // Block any command that contains PointerEvent text
+            if (command.includes('[object PointerEvent]')) {
+                console.error('Blocked PointerEvent string from being executed');
+                addOutput('Error: Invalid command format detected', 'error-text');
+                return;
             }
             
             if (!command) return;

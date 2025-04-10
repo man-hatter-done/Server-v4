@@ -488,6 +488,7 @@ async function executeCommand(command, retryCount = 0, isRetry = false) {
         console.error('Invalid command type received:', typeof command);
         if (command instanceof Event) {
             console.error('Received an Event object instead of a command string');
+            addTerminalText('Error: Cannot execute browser events as commands', 'error');
             return;
         }
         // Try to convert to string if possible
@@ -497,6 +498,13 @@ async function executeCommand(command, retryCount = 0, isRetry = false) {
             console.error('Failed to convert command to string:', e);
             return;
         }
+    }
+    
+    // Block any command that contains PointerEvent text
+    if (command.includes('[object PointerEvent]')) {
+        console.error('Blocked PointerEvent string from being executed');
+        addTerminalText('Error: Invalid command format detected', 'error');
+        return;
     }
     
     if (!command.trim()) return;

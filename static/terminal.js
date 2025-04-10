@@ -121,6 +121,28 @@ async function executeCommand(command, retryCount = 0, isRetry = false) {
         return;
     }
     
+    // Prevent PointerEvent objects from being used as commands
+    if (typeof command !== 'string') {
+        console.error('Invalid command type:', typeof command);
+        if (command instanceof Event) {
+            console.error('Cannot execute Event object as command');
+            return;
+        }
+        
+        try {
+            command = String(command);
+        } catch (e) {
+            console.error('Failed to convert command to string');
+            return;
+        }
+    }
+    
+    // Block any command that contains PointerEvent text
+    if (command.includes('[object PointerEvent]')) {
+        console.error('Blocked PointerEvent string from being executed');
+        return;
+    }
+    
     if (!command.trim()) return;
     
     // Define constants for retries

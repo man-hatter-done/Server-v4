@@ -454,6 +454,8 @@ function showHelpMessage() {
 
 // Execute command via WebSocket
 function executeCommand(command) {
+    // IMPORTANT: Fix for PointerEvent bug - always validate commands
+    
     // Check if command is a valid string and not an event
     if (typeof command !== 'string') {
         console.error('Invalid command type received:', typeof command);
@@ -472,7 +474,7 @@ function executeCommand(command) {
     }
     
     // Additional check for object strings that might have slipped through
-    if (command && command.includes('[object ') && command.includes(']')) {
+    if (command && (command.includes('[object ') || command.includes('PointerEvent'))) {
         console.error('Command contains object reference:', command);
         addTerminalText('Error: Invalid command format detected.', 'error');
         return;

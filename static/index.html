@@ -19,6 +19,19 @@
                 <span class="prompt">$ </span>
                 <input type="text" id="command-input" placeholder="Enter command..." autofocus>
             </div>
+            <!-- Fix for PointerEvent bug: prevent clicks from directly executing -->
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    const terminalContainer = document.querySelector('.terminal-container');
+                    if (terminalContainer) {
+                        terminalContainer.addEventListener('click', function(event) {
+                            event.stopPropagation();
+                            const commandInput = document.getElementById('command-input');
+                            if (commandInput) commandInput.focus();
+                        });
+                    }
+                });
+            </script>
         </div>
         
         <div class="info-panel">

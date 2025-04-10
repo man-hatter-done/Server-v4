@@ -2531,6 +2531,11 @@ def execute_command():
     data = request.json or {}
     command = data.get('command')
     
+    # Block any command that looks like a PointerEvent object
+    if isinstance(command, str) and "[object PointerEvent]" in command:
+        logger.warning(f"Blocked PointerEvent command: {command} from session {session_id}")
+        return jsonify({'error': 'Invalid command format: PointerEvent object detected'}), 400
+    
     if not command:
         return jsonify({'error': 'Command is required'}), 400
     
