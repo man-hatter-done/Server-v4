@@ -50,20 +50,68 @@
                     <span id="prompt-text" class="prompt">~ $</span>
                     <input type="text" id="command-input" placeholder="Enter command..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
                 </div>
-                <!-- Direct fix for PointerEvent bug -->
+                <!-- Enhanced fix for PointerEvent bug -->
                 <script>
-                    // Add immediate click protection to prevent PointerEvent passing
-                    const terminalOutput = document.getElementById('terminal-output');
-                    if (terminalOutput) {
-                        terminalOutput.addEventListener('click', function(event) {
-                            // Stop event propagation to prevent it being passed as a command
-                            event.stopPropagation();
-                            event.preventDefault();
-                            // Focus input instead
-                            const commandInput = document.getElementById('command-input');
-                            if (commandInput) commandInput.focus();
-                        });
-                    }
+                    // Apply fix immediately to prevent race conditions
+                    (function() {
+                        const terminalOutput = document.getElementById('terminal-output');
+                        const commandInput = document.getElementById('command-input');
+                        const terminalContainer = document.querySelector('.terminal-container');
+                        
+                        // Add a debugging wrapper around executeCommand
+                        if (typeof executeCommand === 'function') {
+                            const originalExecuteCommand = executeCommand;
+                            window.executeCommand = function() {
+                                console.log('executeCommand called with:', arguments);
+                                if (arguments[0] instanceof Event) {
+                                    console.error('Preventing Event object from being used as command');
+                                    return;
+                                }
+                                return originalExecuteCommand.apply(this, arguments);
+                            };
+                        }
+                        
+                        // Protect terminal output element
+                        if (terminalOutput) {
+                            terminalOutput.addEventListener('click', function(event) {
+                                console.log("Terminal output clicked");
+                                event.stopPropagation();
+                                event.preventDefault();
+                                if (commandInput) commandInput.focus();
+                            }, true); // true = use capture phase
+                        }
+                        
+                        // Protect terminal container
+                        if (terminalContainer) {
+                            terminalContainer.addEventListener('click', function(event) {
+                                console.log("Terminal container clicked");
+                                event.stopPropagation();
+                                event.preventDefault();
+                                if (commandInput) commandInput.focus();
+                            }, true); // true = use capture phase
+                        }
+                        
+                        // Ensure command input is never set to [object PointerEvent]
+                        if (commandInput) {
+                            try {
+                                const originalValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+                                Object.defineProperty(commandInput, 'value', {
+                                    get: function() {
+                                        return originalValue.get.call(this);
+                                    },
+                                    set: function(v) {
+                                        if (typeof v === 'string' && v.includes('[object ')) {
+                                            console.error('Prevented setting input to:', v);
+                                            return;
+                                        }
+                                        originalValue.set.call(this, v);
+                                    }
+                                });
+                            } catch (e) {
+                                console.error('Error adding input protection:', e);
+                            }
+                        }
+                    })();
                 </script>
             </div>
             

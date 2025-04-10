@@ -483,27 +483,47 @@ function showHelpMessage() {
 
 // Execute command in the terminal session with retry capability
 async function executeCommand(command, retryCount = 0, isRetry = false) {
+    console.log('executeCommand called with:', typeof command, command);
+    
+    // If a DOM event was passed directly, ignore it and use input value
+    if (command instanceof Event) {
+        console.error('Event object passed directly to executeCommand');
+        // Use the input value instead
+        command = commandInput.value.trim();
+        commandInput.value = ''; // Clear input
+        
+        if (!command) {
+            console.log('No command text found in input');
+            return;
+        }
+    }
+    
     // Make sure command is a string to prevent issues when clicking accidentally passes event objects
     if (typeof command !== 'string') {
         console.error('Invalid command type received:', typeof command);
-        if (command instanceof Event) {
-            console.error('Received an Event object instead of a command string');
-            addTerminalText('Error: Cannot execute browser events as commands', 'error');
-            return;
-        }
         // Try to convert to string if possible
         try {
             command = String(command);
         } catch (e) {
             console.error('Failed to convert command to string:', e);
+            addTerminalText('Error: Invalid command format', 'error');
             return;
         }
     }
     
+    // Validate and clean the command
+    command = command.trim();
+    
     // Block any command that contains PointerEvent text
-    if (command.includes('[object PointerEvent]')) {
-        console.error('Blocked PointerEvent string from being executed');
+    if (command.includes('[object ') || command.includes('PointerEvent')) {
+        console.error('Blocked Event object string from being executed');
         addTerminalText('Error: Invalid command format detected', 'error');
+        return;
+    }
+    
+    // Check if command is empty after trimming
+    if (!command) {
+        console.log('Command is empty after trimming');
         return;
     }
     

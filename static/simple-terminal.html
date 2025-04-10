@@ -253,6 +253,8 @@
 
         // Execute command with retry capability
         async function executeCommand(command = null, retryCount = 0) {
+            console.log('executeCommand called with:', typeof command, command);
+            
             // Prevent PointerEvent objects from being used as commands
             if (command instanceof Event) {
                 console.error('Event object passed to executeCommand. Ignoring.');
@@ -268,6 +270,9 @@
                     commandInput.value = '';
                 }
             }
+            
+            // DEBUG: Log what's being executed now
+            console.log('Command to execute:', command);
             
             // Validate command is a string
             if (typeof command !== 'string') {

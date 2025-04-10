@@ -454,21 +454,31 @@ function showHelpMessage() {
 
 // Execute command via WebSocket
 function executeCommand(command) {
-    // IMPORTANT: Fix for PointerEvent bug - always validate commands
+    console.log('executeCommand called with:', typeof command, command);
+    
+    // If event was passed directly, get value from input instead
+    if (command instanceof Event) {
+        console.error('Event object passed to executeCommand. Using input value instead.');
+        // Get command from input field
+        command = commandInput.value.trim();
+        commandInput.value = '';
+        
+        if (!command) {
+            console.log('No command in input');
+            return;
+        }
+    }
     
     // Check if command is a valid string and not an event
     if (typeof command !== 'string') {
         console.error('Invalid command type received:', typeof command);
-        if (command instanceof Event) {
-            console.error('Received an Event object instead of a command string');
-            addTerminalText('Error: Browser event detected instead of command text. This is a bug.', 'error');
-            return;
-        }
+        
         // Try to convert to string if possible
         try {
             command = String(command);
         } catch (e) {
             console.error('Failed to convert command to string:', e);
+            addTerminalText('Error: Invalid command format', 'error');
             return;
         }
     }
@@ -476,7 +486,14 @@ function executeCommand(command) {
     // Additional check for object strings that might have slipped through
     if (command && (command.includes('[object ') || command.includes('PointerEvent'))) {
         console.error('Command contains object reference:', command);
-        addTerminalText('Error: Invalid command format detected.', 'error');
+        addTerminalText('Error: Invalid command format detected', 'error');
+        return;
+    }
+    
+    // Validate command is not empty after trimming
+    command = command.trim();
+    if (!command) {
+        console.log('Command is empty after trimming');
         return;
     }
     
