@@ -115,6 +115,7 @@ logger = logging.getLogger("flask_server")
 MAX_CONTAINERS = int(os.environ.get('MAX_CONTAINERS', 10))
 USERS_PER_CONTAINER = int(os.environ.get('USERS_PER_CONTAINER', 20))
 CONTAINER_IMAGE = os.environ.get('CONTAINER_IMAGE', 'terminal-multi-user:latest')
+MULTI_CONTAINER_MODE = os.environ.get('MULTI_CONTAINER_MODE', 'false').lower() == 'true'
 
 # Global container pool instance - only initialize if we're using containers
 USE_CONTAINERS = os.environ.get('USE_CONTAINERS', 'false').lower() == 'true'
@@ -122,13 +123,22 @@ container_pool = None
 
 if USE_CONTAINERS:
     try:
-        logger.info("Initializing container pool...")
+        if MULTI_CONTAINER_MODE:
+            logger.info("Initializing container pool in multi-container mode...")
+            logger.info(f"Will distribute users across up to {MAX_CONTAINERS} containers")
+        else:
+            logger.info("Initializing container pool in single-container mode...")
+            logger.info("All users will share one container")
+            
         container_pool = ContainerPool(
             max_containers=MAX_CONTAINERS,
             users_per_container=USERS_PER_CONTAINER,
-            image_name=CONTAINER_IMAGE
+            image_name=CONTAINER_IMAGE,
+            multi_container_mode=MULTI_CONTAINER_MODE
         )
-        logger.info(f"Container pool initialized with {MAX_CONTAINERS} containers, {USERS_PER_CONTAINER} users per container")
+        
+        container_mode = "multi-container" if MULTI_CONTAINER_MODE else "single-container"
+        logger.info(f"Container pool initialized in {container_mode} mode with {USERS_PER_CONTAINER} users per container")
     except Exception as e:
         logger.error(f"Failed to initialize container pool: {str(e)}")
         logger.warning("Falling back to directory-based isolation")

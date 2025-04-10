@@ -26,6 +26,10 @@ services:
         # Set to false by default as Render free tier doesn't support Docker-in-Docker
         # If you upgrade to a paid plan with Docker socket access, change to true
         value: false
+      - key: MULTI_CONTAINER_MODE
+        # Set to false to use a single container for all users, true to distribute users across containers
+        # Only applicable when USE_CONTAINERS is true
+        value: false
       - key: CONTAINER_IMAGE
         value: terminal-multi-user:latest
     healthCheckPath: /health
