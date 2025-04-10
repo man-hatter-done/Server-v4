@@ -47,15 +47,28 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load command history from localStorage
     loadCommandHistory();
     
-    // Add event listeners
+    // Add event listeners with explicit event handling
     commandInput.addEventListener('keydown', handleCommandInput);
-    newSessionBtn.addEventListener('click', createNewSession);
-    clearTerminalBtn.addEventListener('click', clearTerminal);
-    endSessionBtn.addEventListener('click', endSession);
+    newSessionBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        createNewSession();
+    });
+    clearTerminalBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        clearTerminal();
+    });
+    endSessionBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        endSession();
+    });
     
     // Theme selector
     if (themeSelector) {
         themeSelector.addEventListener('change', (e) => {
+            e.stopPropagation();
             document.body.setAttribute('data-theme', e.target.value);
             localStorage.setItem('terminal-theme', e.target.value);
         });
@@ -69,6 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Font size selector
     if (fontSizeSelector) {
         fontSizeSelector.addEventListener('change', (e) => {
+            e.stopPropagation();
             document.documentElement.style.setProperty('--font-size', e.target.value + 'px');
             localStorage.setItem('terminal-font-size', e.target.value);
         });
@@ -81,13 +95,19 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Mobile menu toggle
     if (mobileMenuBtn) {
-        mobileMenuBtn.addEventListener('click', () => {
+        mobileMenuBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
             controlPanel.classList.toggle('visible');
         });
     }
     
     // Make sure input is always focused when clicking anywhere in the terminal
-    terminalContainer.addEventListener('click', () => {
+    terminalContainer.addEventListener('click', (event) => {
+        // Prevent the click event from being used as a command
+        event.stopPropagation();
+    
+        // Only focus if not selecting text
         if (!isSelectingText()) {
             commandInput.focus();
         }
@@ -424,6 +444,22 @@ function showHelpMessage() {
 
 // Execute command in the terminal session with retry capability
 async function executeCommand(command, retryCount = 0, isRetry = false) {
+    // Make sure command is a string to prevent issues when clicking accidentally passes event objects
+    if (typeof command !== 'string') {
+        console.error('Invalid command type received:', typeof command);
+        if (command instanceof Event) {
+            console.error('Received an Event object instead of a command string');
+            return;
+        }
+        // Try to convert to string if possible
+        try {
+            command = String(command);
+        } catch (e) {
+            console.error('Failed to convert command to string:', e);
+            return;
+        }
+    }
+    
     if (!command.trim()) return;
     
     // Add to command history (only if not a retry)

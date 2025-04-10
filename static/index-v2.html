@@ -104,6 +104,15 @@
                         <button class="quick-command" data-command="python3 --version">python3 --version</button>
                         <button class="quick-command" data-command="help">help</button>
                     </div>
+                    <script>
+                        // Add immediate event handler for quick command buttons to prevent using old handlers in initial load
+                        document.querySelectorAll('.quick-command').forEach(btn => {
+                            btn.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                            });
+                        });
+                    </script>
                 </div>
                 
                 <div class="panel-section mobile-only">
@@ -133,7 +142,10 @@
         document.addEventListener('DOMContentLoaded', function() {
             const quickCommands = document.querySelectorAll('.quick-command');
             quickCommands.forEach(button => {
-                button.addEventListener('click', function() {
+                button.addEventListener('click', function(event) {
+                    // Prevent event bubbling which could cause issues
+                    event.stopPropagation();
+                    
                     const command = this.getAttribute('data-command');
                     const commandInput = document.getElementById('command-input');
                     commandInput.value = command;
@@ -144,7 +156,10 @@
             // Initialize keyboard helpers
             const keyboardKeys = document.querySelectorAll('.keyboard-key');
             keyboardKeys.forEach(button => {
-                button.addEventListener('click', function() {
+                button.addEventListener('click', function(event) {
+                    // Prevent event bubbling which could cause issues
+                    event.stopPropagation();
+                    
                     const key = this.getAttribute('data-key');
                     const commandInput = document.getElementById('command-input');
                     

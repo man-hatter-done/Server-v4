@@ -419,6 +419,22 @@ function showHelpMessage() {
 
 // Execute command via WebSocket
 function executeCommand(command) {
+    // Check if command is a valid string
+    if (typeof command !== 'string') {
+        console.error('Invalid command type received:', typeof command);
+        if (command instanceof Event) {
+            console.error('Received an Event object instead of a command string');
+            return;
+        }
+        // Try to convert to string if possible
+        try {
+            command = String(command);
+        } catch (e) {
+            console.error('Failed to convert command to string:', e);
+            return;
+        }
+    }
+    
     if (!command.trim()) return;
     
     // Add to command history
