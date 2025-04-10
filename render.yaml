@@ -6,7 +6,6 @@ services:
     dockerContext: .
     plan: free  # Explicitly set to free tier
     # Add startup delay to ensure server is running before health checks
-    startCommand: /entrypoint.sh
   
     envVars:
       - key: DEBUG
