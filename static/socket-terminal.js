@@ -454,11 +454,12 @@ function showHelpMessage() {
 
 // Execute command via WebSocket
 function executeCommand(command) {
-    // Check if command is a valid string
+    // Check if command is a valid string and not an event
     if (typeof command !== 'string') {
         console.error('Invalid command type received:', typeof command);
         if (command instanceof Event) {
             console.error('Received an Event object instead of a command string');
+            addTerminalText('Error: Browser event detected instead of command text. This is a bug.', 'error');
             return;
         }
         // Try to convert to string if possible
@@ -468,6 +469,13 @@ function executeCommand(command) {
             console.error('Failed to convert command to string:', e);
             return;
         }
+    }
+    
+    // Additional check for object strings that might have slipped through
+    if (command && command.includes('[object ') && command.includes(']')) {
+        console.error('Command contains object reference:', command);
+        addTerminalText('Error: Invalid command format detected.', 'error');
+        return;
     }
     
     if (!command.trim()) return;

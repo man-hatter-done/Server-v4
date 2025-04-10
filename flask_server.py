@@ -509,6 +509,12 @@ def handle_execute_command(data):
             logger.warning(f"Invalid command type or empty command: {type(command)}")
             socketio.emit('command_error', {'error': 'No command provided or invalid format'}, to=request.sid)
             return
+        
+        # Reject any command that looks like an event object
+        if "[object " in command and "]" in command:
+            logger.warning(f"Rejected command that appears to be an object string: {command}")
+            socketio.emit('command_error', {'error': 'Invalid command format: Object reference detected'}, to=request.sid)
+            return
             
         # Check for overly long commands
         if len(command) > 4096:  # Reasonable limit for command length

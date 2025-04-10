@@ -24,11 +24,26 @@ const endSessionBtn = document.getElementById('end-session-btn');
 
 // Initialize terminal
 document.addEventListener('DOMContentLoaded', () => {
-    // Add event listeners
+    // Add event listeners with explicit event prevention
     commandInput.addEventListener('keydown', handleCommandInput);
-    newSessionBtn.addEventListener('click', createNewSession);
-    clearTerminalBtn.addEventListener('click', clearTerminal);
-    endSessionBtn.addEventListener('click', endSession);
+    
+    newSessionBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        createNewSession();
+    });
+    
+    clearTerminalBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        clearTerminal();
+    });
+    
+    endSessionBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        endSession();
+    });
     
     // Create initial session
     createNewSession();
@@ -82,6 +97,30 @@ async function createNewSession() {
 
 // Execute command in the terminal session with retry capability
 async function executeCommand(command, retryCount = 0, isRetry = false) {
+    // CRITICAL FIX: Make sure command is a string to prevent issues with PointerEvent being passed
+    if (typeof command !== 'string') {
+        console.error('Invalid command type received:', typeof command);
+        if (command instanceof Event) {
+            console.error('Received an Event object instead of a command string');
+            addTerminalText('Error: Browser event detected instead of command text. This is a bug.', 'error');
+            return;
+        }
+        // Try to convert to string if possible
+        try {
+            command = String(command);
+        } catch (e) {
+            console.error('Failed to convert command to string:', e);
+            return;
+        }
+    }
+    
+    // Additional check for object strings that might have slipped through
+    if (command && command.includes('[object ') && command.includes(']')) {
+        console.error('Command contains object reference:', command);
+        addTerminalText('Error: Invalid command format detected.', 'error');
+        return;
+    }
+    
     if (!command.trim()) return;
     
     // Define constants for retries
@@ -229,7 +268,11 @@ function addTerminalText(text, type = 'output') {
 function handleCommandInput(event) {
     if (event.key === 'Enter') {
         const command = commandInput.value.trim();
-        executeCommand(command);
+        // Clear input field before execution to prevent duplicate execution
+        commandInput.value = '';
+        if (command) {
+            executeCommand(command);
+        }
         commandInput.value = '';
         event.preventDefault();
     }
