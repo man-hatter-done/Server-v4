@@ -641,7 +641,6 @@ def handle_execute_command(data):
             }, to=request.sid)
             return
 
-                return
         
         # Ensure user .local/bin directory exists
         local_bin_dir = os.path.join(session['home_dir'], '.local', 'bin')
