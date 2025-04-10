@@ -1,0 +1,28 @@
+# railway.toml
+
+[services.terminal-server]
+type = "web"
+builder = "dockerfile"
+dockerfilePath = "./Dockerfile"
+dockerContext = "."
+plan = "free"
+
+# Environment variables
+[services.terminal-server.env]
+DEBUG = "false"
+PORT = "3000"
+SESSION_TIMEOUT = "3600"
+USE_AUTH = "false"
+API_KEY = { sync = false }  # Railway will generate this if not provided
+MAX_CONTAINERS = "10"
+USERS_PER_CONTAINER = "20"
+USE_CONTAINERS = "false"
+MULTI_CONTAINER_MODE = "false"
+CONTAINER_IMAGE = "terminal-multi-user:latest"
+
+# Health check configuration
+[services.terminal-server.healthcheck]
+path = "/health"
+
+# Optional: Add startup delay (Railway doesn't have a direct equivalent, but you can handle this in your app logic)
+# Note: Railway manages scaling and health checks automatically on the free tier, so no explicit delay is needed here
