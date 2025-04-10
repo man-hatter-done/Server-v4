@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-User Terminal</title>
+    <link rel="stylesheet" href="style-v2.css">
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        .terminal-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            overflow: hidden;
+        }
+        
+        .terminal {
+            flex: 1;
+            background-color: #0c0c0c;
+            border-radius: 5px;
+            padding: 10px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-size: 14px;
+            line-height: 1.4;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+        
+        .command-input {
+            display: flex;
+            margin-top: 10px;
+        }
+        
+        .prompt {
+            padding: 8px;
+            color: #00ff00;
+            background-color: #0c0c0c;
+            border-top-left-radius: 5px;
+            border-bottom-left-radius: 5px;
+        }
+        
+        #command {
+            flex: 1;
+            padding: 8px;
+            background-color: #0c0c0c;
+            color: #f0f0f0;
+            border: none;
+            border-top-right-radius: 5px;
+            border-bottom-right-radius: 5px;
+            font-family: inherit;
+            font-size: 14px;
+        }
+        
+        #command:focus {
+            outline: none;
+        }
+        
+        .header {
+            background-color: #2c2c2c;
+            padding: 10px;
+            text-align: center;
+            border-bottom: 1px solid #3c3c3c;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .status {
+            display: flex;
+            align-items: center;
+            margin-right: 10px;
+        }
+        
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #f00;
+            margin-right: 5px;
+        }
+        
+        .status-indicator.connected {
+            background-color: #0f0;
+        }
+        
+        .session-info {
+            font-size: 12px;
+            color: #ccc;
+        }
+        
+        .output-line {
+            margin-bottom: 2px;
+        }
+        
+        .error {
+            color: #ff6666;
+        }
+        
+        .commands {
+            color: #66ff66;
+        }
+        
+        .info {
+            color: #6699ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Multi-User Terminal</h1>
+        <div class="status">
+            <div id="statusIndicator" class="status-indicator"></div>
+            <span id="statusText">Disconnected</span>
+            <span id="containerInfo" class="session-info" style="margin-left: 10px;"></span>
+        </div>
+    </div>
+    
+    <div class="terminal-container">
+        <div id="terminal" class="terminal"></div>
+        <div class="command-input">
+            <div class="prompt" id="prompt">$</div>
+            <input type="text" id="command" placeholder="Enter command..." autofocus>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        // Terminal elements
+        const terminal = document.getElementById('terminal');
+        const commandInput = document.getElementById('command');
+        const promptElement = document.getElementById('prompt');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const containerInfo = document.getElementById('containerInfo');
+        
+        // Session state
+        let sessionId = localStorage.getItem('terminalSessionId');
+        let currentDirectory = '~';
+        let commandHistory = [];
+        let historyIndex = -1;
+        let socket;
+        let connected = false;
+        let containerId = '';
+        let containerUsername = '';
+        
+        // Connect to socket.io server
+        function connectSocket() {
+            socket = io(window.location.origin, {
+                query: sessionId ? { sessionId: sessionId } : {}
+            });
+            
+            // Connection events
+            socket.on('connect', () => {
+                connected = true;
+                updateStatus('Connected', true);
+                appendToTerminal('Connected to server', 'info');
+                
+                // Create a new session if we don't have one
+                if (!sessionId) {
+                    socket.emit('create_session', { userId: generateUserId() });
+                }
+            });
+            
+            socket.on('disconnect', () => {
+                connected = false;
+                updateStatus('Disconnected', false);
+                appendToTerminal('Disconnected from server', 'error');
+            });
+            
+            socket.on('status', (data) => {
+                appendToTerminal(`Status: ${data.status}`, 'info');
+            });
+            
+            // Session events
+            socket.on('session_created', (data) => {
+                sessionId = data.sessionId;
+                localStorage.setItem('terminalSessionId', sessionId);
+                appendToTerminal(`Session created: ${sessionId.substr(0, 8)}...`, 'info');
+                appendToTerminal('Type "help" for available commands.', 'info');
+            });
+            
+            socket.on('session_reconnected', (data) => {
+                appendToTerminal(`Reconnected to existing session: ${data.sessionId.substr(0, 8)}...`, 'info');
+            });
+            
+            socket.on('session_expired', (data) => {
+                appendToTerminal('Session expired. Please refresh to create a new session.', 'error');
+            });
+            
+            socket.on('session_ended', (data) => {
+                appendToTerminal('Session terminated.', 'info');
+                localStorage.removeItem('terminalSessionId');
+                sessionId = null;
+            });
+            
+            // Command events
+            socket.on('command_output', (data) => {
+                // Handle session renewal
+                if (data.sessionRenewed && data.newSessionId) {
+                    sessionId = data.newSessionId;
+                    localStorage.setItem('terminalSessionId', sessionId);
+                    appendToTerminal('Session renewed', 'info');
+                }
+                
+                if (data.output) {
+                    // Process output for container info
+                    if (data.output.includes('Container ID:')) {
+                        const match = data.output.match(/Container ID: ([a-f0-9]+)/);
+                        if (match) {
+                            containerId = match[1];
+                            updateContainerInfo();
+                        }
+                    }
+                    
+                    if (data.output.includes('Username:')) {
+                        const match = data.output.match(/Username: ([a-z0-9]+)/);
+                        if (match) {
+                            containerUsername = match[1];
+                            updateContainerInfo();
+                        }
+                    }
+                    
+                    appendToTerminal(data.output);
+                }
+            });
+            
+            socket.on('command_complete', (data) => {
+                // Update prompt with working directory
+                if (data.workingDirectory) {
+                    currentDirectory = data.workingDirectory;
+                    updatePrompt();
+                }
+                
+                // Handle session renewal
+                if (data.sessionRenewed && data.newSessionId) {
+                    sessionId = data.newSessionId;
+                    localStorage.setItem('terminalSessionId', sessionId);
+                }
+                
+                // Enable input after command completes
+                commandInput.disabled = false;
+                commandInput.focus();
+            });
+            
+            socket.on('command_error', (data) => {
+                appendToTerminal(`Error: ${data.error}`, 'error');
+                
+                // Handle session renewal
+                if (data.sessionRenewed && data.newSessionId) {
+                    sessionId = data.newSessionId;
+                    localStorage.setItem('terminalSessionId', sessionId);
+                }
+                
+                // Enable input after error
+                commandInput.disabled = false;
+                commandInput.focus();
+            });
+            
+            socket.on('working_directory', (data) => {
+                currentDirectory = data.path;
+                updatePrompt();
+            });
+            
+            // Special event for container info
+            socket.on('container_info', (data) => {
+                containerId = data.containerId || '';
+                containerUsername = data.username || '';
+                updateContainerInfo();
+            });
+        }
+        
+        // Helper functions
+        function updateStatus(text, isConnected) {
+            statusText.textContent = text;
+            statusIndicator.classList.toggle('connected', isConnected);
+        }
+        
+        function updatePrompt() {
+            promptElement.textContent = `${currentDirectory} $`;
+        }
+        
+        function updateContainerInfo() {
+            if (containerId && containerUsername) {
+                containerInfo.textContent = `Container: ${containerId.substr(0, 8)}, User: ${containerUsername}`;
+            } else if (containerId) {
+                containerInfo.textContent = `Container: ${containerId.substr(0, 8)}`;
+            } else if (containerUsername) {
+                containerInfo.textContent = `User: ${containerUsername}`;
+            } else {
+                containerInfo.textContent = '';
+            }
+        }
+        
+        function appendToTerminal(text, className = '') {
+            if (!text) return;
+            
+            // Split by newlines and create a div for each line
+            const lines = text.split('\n');
+            for (const line of lines) {
+                const lineElement = document.createElement('div');
+                lineElement.className = `output-line ${className}`;
+                lineElement.textContent = line;
+                terminal.appendChild(lineElement);
+            }
+            
+            // Auto-scroll to bottom
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+        
+        function executeCommand(command) {
+            if (!command.trim()) return;
+            
+            // Disable input while command is running
+            commandInput.disabled = true;
+            
+            // Display command in terminal
+            appendToTerminal(`${promptElement.textContent} ${command}`, 'commands');
+            
+            // Add to history
+            commandHistory.unshift(command);
+            historyIndex = -1;
+            
+            // Limit history size
+            if (commandHistory.length > 100) {
+                commandHistory.pop();
+            }
+            
+            // Special client-side commands
+            if (command.trim().toLowerCase() === 'clear') {
+                terminal.innerHTML = '';
+                commandInput.disabled = false;
+                commandInput.focus();
+                return;
+            }
+            
+            if (command.trim().toLowerCase() === 'help') {
+                appendToTerminal(`
+Available commands:
+- help                      Display this help message
+- clear                     Clear the terminal screen
+- exit                      End your session (preserves files)
+- container-info            Display information about your container
+- user-info                 Display your user information
+
+Special Features:
+- Up/Down arrows            Navigate command history
+- Tab                       Command completion (future feature)
+- Ctrl+C                    Cancel current command (future feature)
+
+Container Commands:
+- ls                        List files in current directory
+- cd <directory>            Change directory
+- mkdir <directory>         Create a directory
+- cat <file>                Display file contents
+- python, pip               Run Python commands
+                `, 'info');
+                commandInput.disabled = false;
+                commandInput.focus();
+                return;
+            }
+            
+            if (command.trim().toLowerCase() === 'exit') {
+                socket.emit('end_session', { session_id: sessionId });
+                localStorage.removeItem('terminalSessionId');
+                sessionId = null;
+                appendToTerminal('Session terminated.', 'info');
+                commandInput.disabled = false;
+                commandInput.focus();
+                return;
+            }
+            
+            if (command.trim().toLowerCase() === 'container-info') {
+                socket.emit('execute_command', {
+                    command: 'echo "Container ID: $(hostname)" && echo "Username: $(whoami)"',
+                    session_id: sessionId
+                });
+                return;
+            }
+            
+            if (command.trim().toLowerCase() === 'user-info') {
+                socket.emit('execute_command', {
+                    command: 'echo "User: $(whoami)" && echo "Home: $HOME" && echo "Groups: $(groups)"',
+                    session_id: sessionId
+                });
+                return;
+            }
+            
+            // Send command to server
+            socket.emit('execute_command', {
+                command: command,
+                session_id: sessionId
+            });
+        }
+        
+        // Generate a stable user ID based on device info
+        function generateUserId() {
+            const userAgent = navigator.userAgent;
+            const language = navigator.language;
+            const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const screenResolution = `${window.screen.width}x${window.screen.height}`;
+            
+            // Combine factors into a string and hash it
+            const factors = `${userAgent}-${language}-${timeZone}-${screenResolution}`;
+            let hash = 0;
+            for (let i = 0; i < factors.length; i++) {
+                const char = factors.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // Convert to 32-bit integer
+            }
+            
+            return `container-user-${Math.abs(hash).toString(16)}`;
+        }
+        
+        // Event listeners
+        commandInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const command = commandInput.value;
+                commandInput.value = '';
+                executeCommand(command);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (historyIndex < commandHistory.length - 1) {
+                    historyIndex++;
+                    commandInput.value = commandHistory[historyIndex];
+                    // Move cursor to end
+                    setTimeout(() => {
+                        commandInput.selectionStart = commandInput.value.length;
+                        commandInput.selectionEnd = commandInput.value.length;
+                    }, 0);
+                }
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (historyIndex > 0) {
+                    historyIndex--;
+                    commandInput.value = commandHistory[historyIndex];
+                } else if (historyIndex === 0) {
+                    historyIndex = -1;
+                    commandInput.value = '';
+                }
+            }
+        });
+        
+        // Initialize
+        updateStatus('Connecting...', false);
+        connectSocket();
+        updatePrompt();
+        
+        // Welcome message
+        appendToTerminal('Multi-User Terminal - Container-based Isolation', 'info');
+        appendToTerminal('Type "help" for available commands.\n', 'info');
+    </script>
+</body>
+</html>
