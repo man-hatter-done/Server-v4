@@ -11,7 +11,7 @@ services:
       - key: DEBUG
         value: false
       - key: PORT
-        value: 3000
+        value: 8080  # Try a different port than 3000 which might be restricted
       - key: SESSION_TIMEOUT
         value: 3600  # 1 hour in seconds
       - key: USE_AUTH
