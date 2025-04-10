@@ -2,7 +2,7 @@ services:
   - type: web
     name: terminal-server
     env: docker
-    dockerfilePath: ./Dockerfile.render
+    dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: free  # Explicitly set to free tier
     scaling:
