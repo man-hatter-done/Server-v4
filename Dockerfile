@@ -85,9 +85,8 @@ RUN mkdir -p logs user_data && \
 RUN useradd -m -s /bin/bash app-user && \
     chown -R app-user:app-user /app
 
-# Add user to docker group to access Docker socket
-RUN usermod -aG docker app-user && \
-    echo "app-user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/app-user && \
+# Give user sudo access but remove docker group (not needed on Render)
+RUN echo "app-user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/app-user && \
     chmod 0440 /etc/sudoers.d/app-user
 
 # Expose the port for API and WebSocket connections
