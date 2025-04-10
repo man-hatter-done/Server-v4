@@ -1,0 +1,21 @@
+                socketio.emit('command_output', {
+                    'output': "Warning: OpenSSL wrapper script not found. Using direct OpenSSL command.\n"
+                }, to=request.sid)
+            
+            # Verify the wrapper exists and is executable with extensive diagnostics
+            wrapper_status = "Not found"
+            if os.path.exists(openssl_wrapper):
+                if os.access(openssl_wrapper, os.X_OK):
+                    wrapper_status = "Found and executable"
+                else:
+                    wrapper_status = "Found but not executable"
+                    # Try to fix permissions again
+                    try:
+                        os.chmod(openssl_wrapper, 0o777)
+                        subprocess.run(["chmod", "777", openssl_wrapper], check=False)
+                        wrapper_status = "Permissions fixed"
+                    except Exception as e:
+                        print(f"Failed to fix permissions: {str(e)}")
+            
+            print(f"OpenSSL wrapper status: {wrapper_status}")
+            
