@@ -1108,10 +1108,26 @@ def handle_execute_command(data):
 
 # Route to serve WebSocket terminal page
 @app.route('/ws')
-@cached_response(timeout=3600)  # Cache for 1 hour
 def websocket_terminal():
     """Serve enhanced WebSocket terminal interface"""
-    return send_file('static/socket-terminal.html')
+    # Disable caching to ensure latest version is always served
+    response = send_file('static/ios-terminal-v2.html')
+    # Add cache control headers to prevent browser caching
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+@app.route('/ios-terminal')
+def ios_terminal():
+    """Alternative route for iOS terminal - easier to access and remember"""
+    # Disable caching to ensure latest version is always served
+    response = send_file('static/ios-terminal-v2.html')
+    # Add cache control headers to prevent browser caching
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 # Function to get file contents with caching
 @file_content_cache
