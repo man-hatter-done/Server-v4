@@ -1,56 +1,87 @@
-# iOS Terminal
+# Enhanced iOS Terminal Server
 
-A high-performance, Python-based terminal server that provides a Linux command environment for iOS apps, similar to Termux for Android. This server is designed to be easily accessible from Swift applications and offers enhanced stability and performance optimizations.
+A redesigned, high-performance backend for iOS Terminal that provides a robust Linux terminal emulation experience through WebSockets and HTTP APIs. This server delivers a true Linux terminal experience with integrated file management, without redundant HTTP endpoints.
 
 ## Features
 
-- **Full Linux Command Access**: Execute any command you'd run in a terminal
-- **Session Persistence**: Your files and state are preserved between commands
+- **Full Linux Terminal Emulation**: Complete Linux command environment with proper shell setup
+- **Integrated File Operations**: File operations handled directly through terminal commands
+- **Real-time WebSocket Interaction**: Streaming command output in real-time
+- **Enhanced Session Management**: Improved session persistence and isolation
+- **Streamlined API**: Reduced endpoints with focus on terminal experience
 - **Python Support**: Run Python scripts and other interpreted languages
-- **Simple API**: Easy to integrate with iOS apps
-- **Web Terminal Interface**: Test commands directly in your browser
-- **No Docker Required**: Run directly on the server without containerization
-- **Fast Deployment**: Quick to deploy to Render.com or other platforms
-- **High Performance**: Optimized for concurrent users with advanced session pooling
+- **Simple Integration**: Easy to integrate with iOS apps
 - **Memory Management**: Intelligent memory monitoring to prevent OOM issues
-- **Enhanced Environment**: Automatically sets up a rich command environment
-- **Health Monitoring**: Built-in healthchecks and resource management
+- **Enhanced Environment**: Automatically sets up a rich command environment for each user
 
-## Performance Optimizations
+## Architectural Improvements
 
-This server includes several performance optimizations to handle high traffic and ensure stability:
+This redesign offers significant architectural improvements over the previous version:
 
-### Session Pooling
+### Enhanced Terminal Emulation
 
-Pre-creates session environments for faster user allocation:
-- Configurable pool size (default: 10)
-- Automatic pool refilling
-- Thread-safe pool management
-- Expired session cleanup
+- Complete Linux terminal experience with proper environment variables
+- Commands executed in isolated user environments
+- Shell configuration files (.bashrc, .profile) and utility scripts
+- Support for long-running and interactive commands
+
+### Integrated File Operations
+
+- File operations handled directly through terminal commands
+- No separate HTTP endpoints for file operations
+- Files properly tied to user sessions and isolated
+- Full support for standard file commands (ls, cat, mkdir, rm, etc.)
+
+### Real-time WebSocket Communication
+
+- Real-time command output streaming
+- Better interactive experience for terminal operations
+- Support for terminal resize and control signals
+- Low-latency command execution
+
+### Improved Session Management
+
+- Robust session tracking with proper cleanup
+- Session persistence across server restarts
+- Clear session lifecycle with transparent error handling
+- Automatic session renewal with state preservation
 
 ### Memory Management
 
 Intelligent memory monitoring prevents out-of-memory crashes:
 - Automatic garbage collection when memory usage is high
-- Cache clearing under memory pressure
-- Dynamic session cleanup when resources are low
+- Resource monitoring and cleanup
+- Dynamic session management based on system resources
 - Background monitoring thread
 
-### Worker Optimization
+## Core Components
 
-Gunicorn worker configuration is optimized for concurrent users:
-- Multiple workers (12 by default)
-- Thread-based request handling
-- Graceful timeouts and restarts
-- Preloading for faster startup
+The redesigned server consists of these main components:
 
-### Resource Management
+### 1. Terminal Command Handler
 
-Docker container resource limits prevent host resource starvation:
-- Memory limits and reservations
-- CPU allocation
-- File descriptor limits
-- Process limits
+The `TerminalCommandHandler` class:
+- Executes terminal commands in isolated environments
+- Integrates file operations directly into command execution
+- Streams command output in real-time
+- Handles command errors gracefully
+
+### 2. Session Manager
+
+The `SessionManager` class:
+- Creates and validates user sessions
+- Maps users to sessions for continuity
+- Provides session persistence
+- Handles expired session cleanup
+- Manages session directories and data
+
+### 3. Environment Setup
+
+The `EnvironmentSetup` class:
+- Creates isolated user environments
+- Sets up configuration files (.bashrc, .profile)
+- Copies utility scripts to user environments
+- Configures environment variables
 
 ## Configuration
 
@@ -61,21 +92,67 @@ The server can be configured using environment variables:
 DEBUG=false                  # Set to true for development logging
 PORT=3000                    # HTTP port to listen on
 SESSION_TIMEOUT=3600         # Session timeout in seconds
-USE_AUTH=false               # Enable authentication
-COMMAND_TIMEOUT=300          # Command execution timeout
-
-# Performance Configuration
-SESSION_POOL_SIZE=10         # Number of pre-created sessions
-MAX_POOL_AGE=1800            # Maximum age of pooled sessions
+USER_DATA_DIR=user_data      # Directory for user session data
+SCRIPT_DIR=user_scripts      # Directory for user scripts
 ```
 
 These can be set in the docker-compose.yaml file or in your deployment environment.
 
 ## API Reference
 
-The API is designed to be simple and compatible with the original Docker-based implementation, but without requiring API keys by default.
+The redesigned API focuses on WebSocket communication for real-time terminal interaction, with HTTP endpoints for compatibility.
 
-### Create Session
+### WebSocket API (Recommended)
+
+Connect to `/socket.io/` for WebSocket communication.
+
+#### Events
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `create_session` | Client → Server | Create a new terminal session |
+| `session_created` | Server → Client | Confirm session creation with details |
+| `join_session` | Client → Server | Join an existing session |
+| `execute_command` | Client → Server | Execute a command in the terminal |
+| `command_output` | Server → Client | Real-time command output |
+| `command_complete` | Server → Client | Command execution completed |
+| `end_session` | Client → Server | End a terminal session |
+
+#### Example WebSocket Usage
+
+```javascript
+// Connect to the WebSocket server
+const socket = io('http://your-server:3000');
+
+// Create a new session
+socket.emit('create_session', { userId: 'user-123' });
+
+// Handle session creation response
+socket.on('session_created', (data) => {
+  const sessionId = data.sessionId;
+  console.log(`Session created: ${sessionId}`);
+  
+  // Execute a command
+  socket.emit('execute_command', {
+    command: 'ls -la',
+    session_id: sessionId
+  });
+});
+
+// Handle command output
+socket.on('command_output', (data) => {
+  console.log(data.output); // Real-time output streaming
+});
+
+// Handle command completion
+socket.on('command_complete', (data) => {
+  console.log(`Command completed with exit code: ${data.exitCode}`);
+});
+```
+
+### HTTP API (For Compatibility)
+
+#### Create Session
 
 ```
 POST /create-session
@@ -92,13 +169,13 @@ POST /create-session
 ```json
 {
   "sessionId": "unique-session-id",
-  "userId": "user-identifier",
-  "message": "Session created successfully",
-  "expiresIn": 3600000
+  "created": "2023-05-01T12:34:56.789Z",
+  "expiresIn": 3600,
+  "workingDirectory": "~"
 }
 ```
 
-### Execute Command
+#### Execute Command
 
 ```
 POST /execute-command
@@ -119,32 +196,12 @@ X-Session-Id: your-session-id
 **Response:**
 ```json
 {
-  "output": "total 8\ndrwxr-xr-x 2 user user 4096 May 1 12:34 .\ndrwxr-xr-x 6 user user 4096 May 1 12:34 ..\n"
+  "output": "total 8\ndrwxr-xr-x 2 user user 4096 May 1 12:34 .\ndrwxr-xr-x 6 user user 4096 May 1 12:34 ..\n",
+  "exitCode": 0
 }
 ```
 
-### Get Session Info
-
-```
-GET /session
-```
-
-**Headers:**
-```
-X-Session-Id: your-session-id
-```
-
-**Response:**
-```json
-{
-  "userId": "user-identifier",
-  "created": "2023-05-01T12:34:56.789Z",
-  "lastAccessed": "2023-05-01T12:45:00.000Z",
-  "expiresIn": 3000000
-}
-```
-
-### Delete Session
+#### End Session
 
 ```
 DELETE /session
@@ -158,11 +215,42 @@ X-Session-Id: your-session-id
 **Response:**
 ```json
 {
-  "message": "Session terminated successfully"
+  "message": "Session ended successfully"
 }
 ```
 
-## Deployment to Render.com
+## Running the Server
+
+### Prerequisites
+
+- Python 3.8+
+- Flask, Flask-SocketIO, Eventlet
+- Other dependencies listed in requirements.txt
+
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/your-username/ios-terminal-server.git
+   cd ios-terminal-server
+   ```
+
+2. Install the required dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Run the enhanced server:
+   ```bash
+   python run_enhanced_server.py
+   ```
+
+4. Access the documentation at:
+   ```
+   http://localhost:3000/
+   ```
+
+### Deployment to Render.com
 
 This server can be easily deployed to Render.com:
 
@@ -170,22 +258,124 @@ This server can be easily deployed to Render.com:
 2. Create a new Web Service on Render.com
 3. Connect to your forked GitHub repository
 4. Select "Docker" as the environment
-5. Choose the `Dockerfile.flask` file
-6. Click "Create Web Service"
+5. Click "Create Web Service"
 
-## Swift Client
+## Swift Client Integration
 
-Here's the Swift client code for accessing the iOS Terminal server:
+Here are integration examples for the redesigned backend:
+
+### WebSocket Client (Recommended)
 
 ```swift
-import Foundation
+import SocketIO
 
 class TerminalService {
     static let shared = TerminalService()
     
+    private let manager: SocketManager
+    private let socket: SocketIOClient
+    private var sessionId: String?
+    
+    private init() {
+        // Change this URL to your deployed server
+        let serverURL = URL(string: "https://your-terminal-server.onrender.com")!
+        manager = SocketManager(socketURL: serverURL, config: [.log(true), .compress])
+        socket = manager.defaultSocket
+        
+        setupSocketEvents()
+        socket.connect()
+    }
+    
+    private func setupSocketEvents() {
+        socket.on(clientEvent: .connect) { [weak self] data, ack in
+            print("Socket connected")
+            self?.createSession()
+        }
+        
+        socket.on("session_created") { [weak self] data, ack in
+            guard let data = data[0] as? [String: Any],
+                  let sessionId = data["sessionId"] as? String else { return }
+            
+            self?.sessionId = sessionId
+            print("Session created: \(sessionId)")
+            
+            // Notify session created if needed
+            NotificationCenter.default.post(name: .terminalSessionCreated, object: nil)
+        }
+        
+        socket.on("command_output") { data, ack in
+            guard let data = data[0] as? [String: Any],
+                  let output = data["output"] as? String else { return }
+            
+            // Handle streaming output - this will be called multiple times
+            NotificationCenter.default.post(name: .terminalOutputReceived, object: nil, userInfo: ["output": output])
+        }
+        
+        socket.on("command_complete") { data, ack in
+            guard let data = data[0] as? [String: Any],
+                  let exitCode = data["exitCode"] as? Int else { return }
+            
+            // Command completed
+            NotificationCenter.default.post(name: .terminalCommandCompleted, object: nil, userInfo: ["exitCode": exitCode])
+        }
+        
+        socket.on("command_error") { data, ack in
+            guard let data = data[0] as? [String: Any],
+                  let error = data["error"] as? String else { return }
+            
+            // Handle command error
+            NotificationCenter.default.post(name: .terminalCommandError, object: nil, userInfo: ["error": error])
+        }
+    }
+    
+    func createSession() {
+        // Include device identifier for uniqueness
+        let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        socket.emit("create_session", ["userId": deviceId])
+    }
+    
+    func executeCommand(_ command: String) {
+        guard let sessionId = sessionId else {
+            print("No active session")
+            // Create session first and then execute
+            createSession()
+            // Wait for session created and retry
+            return
+        }
+        
+        socket.emit("execute_command", [
+            "command": command,
+            "session_id": sessionId
+        ])
+    }
+    
+    func endSession() {
+        guard let sessionId = sessionId else { return }
+        
+        socket.emit("end_session", ["session_id": sessionId])
+        self.sessionId = nil
+    }
+}
+
+// Notification names for terminal events
+extension Notification.Name {
+    static let terminalSessionCreated = Notification.Name("terminalSessionCreated")
+    static let terminalOutputReceived = Notification.Name("terminalOutputReceived")
+    static let terminalCommandCompleted = Notification.Name("terminalCommandCompleted")
+    static let terminalCommandError = Notification.Name("terminalCommandError")
+}
+```
+
+### HTTP Client (Alternative)
+
+```swift
+import Foundation
+
+class TerminalHTTPService {
+    static let shared = TerminalHTTPService()
+    
     private let baseURL: String
     private var sessionId: String?
-    private var userId: String?
     
     private init() {
         // Change this URL to your deployed server
@@ -193,24 +383,7 @@ class TerminalService {
     }
     
     /// Creates a new terminal session
-    /// - Parameter completion: Called with session ID or an error
     func createSession(completion: @escaping (Result<String, Error>) -> Void) {
-        // Check for existing valid session
-        if let existingSession = sessionId {
-            validateSession { result in
-                switch result {
-                case .success:
-                    completion(.success(existingSession))
-                case .failure:
-                    self.createNewSession(completion: completion)
-                }
-            }
-        } else {
-            createNewSession(completion: completion)
-        }
-    }
-    
-    private func createNewSession(completion: @escaping (Result<String, Error>) -> Void) {
         guard let url = URL(string: "\(baseURL)/create-session") else {
             completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
@@ -245,7 +418,6 @@ class TerminalService {
                     
                     if let newSessionId = json["sessionId"] as? String {
                         self.sessionId = newSessionId
-                        self.userId = json["userId"] as? String
                         completion(.success(newSessionId))
                     } else {
                         completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])))
@@ -259,52 +431,22 @@ class TerminalService {
         }.resume()
     }
     
-    private func validateSession(completion: @escaping (Result<Bool, Error>) -> Void) {
-        guard let sessionId = sessionId else {
-            completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "No active session"])))
-            return
-        }
-        
-        guard let url = URL(string: "\(baseURL)/session") else {
-            completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
-            return
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.addValue(sessionId, forHTTPHeaderField: "X-Session-Id")
-        
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-            
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
-                // Session is invalid
-                self.sessionId = nil
-                completion(.failure(NSError(domain: "TerminalService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Session expired"])))
-                return
-            }
-            
-            completion(.success(true))
-        }.resume()
-    }
-    
     /// Executes a command in the terminal session
-    /// - Parameters:
-    ///   - command: The command to execute
-    ///   - completion: Called with the command output or an error
     func executeCommand(_ command: String, completion: @escaping (Result<String, Error>) -> Void) {
         // First ensure we have a valid session
-        createSession { result in
-            switch result {
-            case .success(let sessionId):
-                self.executeCommandWithSession(command, sessionId: sessionId, completion: completion)
-            case .failure(let error):
-                completion(.failure(error))
+        if sessionId == nil {
+            createSession { result in
+                switch result {
+                case .success(let sessionId):
+                    self.executeCommandWithSession(command, sessionId: sessionId, completion: completion)
+                case .failure(let error):
+                    completion(.failure(error))
+                }
             }
+            return
         }
+        
+        executeCommandWithSession(command, sessionId: sessionId!, completion: completion)
     }
     
     private func executeCommandWithSession(_ command: String, sessionId: String, completion: @escaping (Result<String, Error>) -> Void) {
@@ -382,9 +524,9 @@ class TerminalService {
 }
 ```
 
-## Usage in Swift Projects
+## Example Usage in Swift Projects
 
-Here's how to use the TerminalService in your Swift project:
+Here's how to use the WebSocket terminal service in your Swift project:
 
 ```swift
 import UIKit
@@ -395,6 +537,14 @@ class TerminalViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        
+        // Set up notification observers for real-time updates
+        NotificationCenter.default.addObserver(self, selector: #selector(handleOutputReceived(_:)), 
+                                              name: .terminalOutputReceived, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleCommandCompleted(_:)), 
+                                              name: .terminalCommandCompleted, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleCommandError(_:)), 
+                                              name: .terminalCommandError, object: nil)
     }
     
     @IBAction func executeButtonTapped(_ sender: Any) {
@@ -402,108 +552,144 @@ class TerminalViewController: UIViewController {
             return
         }
         
-        outputTextView.text = "Executing command..."
+        // Clear previous output
+        outputTextView.text = ""
         
-        TerminalService.shared.executeCommand(command) { [weak self] result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let output):
-                    self?.outputTextView.text = output
-                case .failure(let error):
-                    self?.outputTextView.text = "Error: \(error.localizedDescription)"
-                }
+        // Execute the command via WebSocket
+        TerminalService.shared.executeCommand(command)
+        
+        // Clear the input field
+        commandTextField.text = ""
+    }
+    
+    @objc func handleOutputReceived(_ notification: Notification) {
+        guard let output = notification.userInfo?["output"] as? String else { return }
+        
+        // Append the output to the text view
+        DispatchQueue.main.async { [weak self] in
+            self?.outputTextView.text.append(output)
+            // Scroll to bottom
+            let range = NSRange(location: (self?.outputTextView.text.count ?? 0) - 1, length: 1)
+            self?.outputTextView.scrollRangeToVisible(range)
+        }
+    }
+    
+    @objc func handleCommandCompleted(_ notification: Notification) {
+        guard let exitCode = notification.userInfo?["exitCode"] as? Int else { return }
+        
+        DispatchQueue.main.async { [weak self] in
+            // Optionally show command completion status
+            if exitCode != 0 {
+                self?.outputTextView.text.append("\n(Command completed with exit code \(exitCode))")
             }
         }
     }
     
+    @objc func handleCommandError(_ notification: Notification) {
+        guard let error = notification.userInfo?["error"] as? String else { return }
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.outputTextView.text.append("\nError: \(error)")
+        }
+    }
+    
     @IBAction func clearButtonTapped(_ sender: Any) {
-        commandTextField.text = ""
         outputTextView.text = ""
     }
 }
 ```
 
-## Example Use Cases
+## Terminal Command Examples
 
-### Installing and Using Python Packages
+The redesigned server supports all standard Linux commands, with properly integrated file operations:
+
+### File Operations
+
+```swift
+// List files in the current directory
+TerminalService.shared.executeCommand("ls -la")
+
+// Create a new directory
+TerminalService.shared.executeCommand("mkdir myproject")
+
+// Change to that directory
+TerminalService.shared.executeCommand("cd myproject")
+
+// Create a new file with content
+TerminalService.shared.executeCommand("echo 'Hello, world!' > hello.txt")
+
+// View file content
+TerminalService.shared.executeCommand("cat hello.txt")
+
+// Append to a file
+TerminalService.shared.executeCommand("echo 'This is a new line' >> hello.txt")
+
+// Remove a file
+TerminalService.shared.executeCommand("rm hello.txt")
+```
+
+### Python Development
 
 ```swift
 // Install a Python package
-TerminalService.shared.executeCommand("pip install requests") { result in
-    switch result {
-    case .success(let output):
-        print("Installation output: \(output)")
-        
-        // Create a Python script that uses the package
-        let pythonCode = """
-        import requests
-        
-        response = requests.get('https://api.github.com')
-        print(f"GitHub API Status Code: {response.status_code}")
-        print(f"GitHub API Headers: {response.headers}")
-        """
-        
-        let createScriptCommand = "echo '\(pythonCode)' > github_api.py"
-        TerminalService.shared.executeCommand(createScriptCommand) { _ in
-            // Run the script
-            TerminalService.shared.executeCommand("python3 github_api.py") { result in
-                if case .success(let output) = result {
-                    print("Script output: \(output)")
-                }
-            }
-        }
-        
-    case .failure(let error):
-        print("Error: \(error.localizedDescription)")
-    }
-}
-```
+TerminalService.shared.executeCommand("pip install requests")
 
-### File Management and Text Processing
+// Create a Python script
+let pythonCode = """
+import requests
 
-```swift
-// Create some text files
-TerminalService.shared.executeCommand("echo 'This is file 1' > file1.txt") { _ in
-    TerminalService.shared.executeCommand("echo 'This is file 2' > file2.txt") { _ in
-        // Concatenate files and use grep
-        TerminalService.shared.executeCommand("cat file1.txt file2.txt | grep 'file'") { result in
-            if case .success(let output) = result {
-                print("Grep results: \(output)")
-            }
-        }
-    }
-}
-```
-
-### Creating and Running a Web Server
-
-```swift
-// Create a simple Flask web server
-let flaskCode = """
-from flask import Flask
-app = Flask(__name__)
-
-@app.route('/')
-def hello():
-    return 'Hello from your iOS terminal!'
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+response = requests.get('https://api.github.com')
+print(f"GitHub API Status Code: {response.status_code}")
 """
 
-TerminalService.shared.executeCommand("pip install flask") { _ in
-    TerminalService.shared.executeCommand("echo '\(flaskCode)' > server.py") { _ in
-        // Run the server in the background
-        TerminalService.shared.executeCommand("python3 server.py &") { result in
-            if case .success(let output) = result {
-                print("Server started: \(output)")
-                
-                // We could now access this server via HTTP at the server's address:8000
-            }
-        }
-    }
+TerminalService.shared.executeCommand("echo '\(pythonCode)' > github_api.py")
+
+// Run the script
+TerminalService.shared.executeCommand("python3 github_api.py")
+```
+
+### Advanced Usage: Multi-step Operations
+
+Using WebSockets allows for cleaner code with real-time updates:
+
+```swift
+// Set up a simple web server
+func setupWebServer() {
+    // 1. Create project directory
+    TerminalService.shared.executeCommand("mkdir -p webserver")
+    
+    // 2. Change to that directory
+    TerminalService.shared.executeCommand("cd webserver")
+    
+    // 3. Install Flask
+    TerminalService.shared.executeCommand("pip install flask")
+    
+    // 4. Create the server file
+    let serverCode = """
+    from flask import Flask
+    app = Flask(__name__)
+
+    @app.route('/')
+    def hello():
+        return 'Hello from iOS Terminal!'
+
+    if __name__ == '__main__':
+        app.run(host='0.0.0.0', port=8000)
+    """
+    
+    TerminalService.shared.executeCommand("echo '\(serverCode)' > server.py")
+    
+    // 5. Run the server in the background
+    TerminalService.shared.executeCommand("python3 server.py &")
 }
 ```
+
+## Additional Resources
+
+For more detailed information about the redesign and API changes, see:
+
+- [REDESIGN.md](./REDESIGN.md) - Details about the architectural changes
+- [API_CHANGES.md](./API_CHANGES.md) - Specific API changes and migration guide
 
 ## License
 
