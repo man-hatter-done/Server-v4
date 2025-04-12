@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import logging
 import threading
+from openssl_improved import setup_openssl_environment
 
 logger = logging.getLogger("environment_setup")
 
@@ -55,6 +56,10 @@ export TERM=xterm-256color
 
 # Setup for interactive commands
 export INTERACTIVE_COMMAND_SUPPORT=1
+
+# Setup for OpenSSL
+export OPENSSL_PASSPHRASE="termux_secure_passphrase"
+export SSL_DIR="$HOME/.ssl"
 
 # Source .bashrc if it exists
 if [ -f "$HOME/.bashrc" ]; then
@@ -140,7 +145,8 @@ class EnvironmentSetup:
                     os.path.join(home_dir, 'downloads'),
                     os.path.join(home_dir, '.local', 'bin'),
                     os.path.join(home_dir, '.config'),
-                    os.path.join(home_dir, '.cache')
+                    os.path.join(home_dir, '.cache'),
+                    os.path.join(home_dir, '.ssl')  # For OpenSSL operations
                 ]
                 
                 for directory in dirs_to_create:
@@ -151,6 +157,9 @@ class EnvironmentSetup:
                 
                 # Copy utility scripts
                 self._copy_utility_scripts(home_dir)
+                
+                # Set up OpenSSL environment
+                setup_openssl_environment(home_dir)
                 
                 logger.info(f"User environment setup complete for {home_dir}")
                 return True

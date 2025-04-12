@@ -17,6 +17,7 @@ import select
 import re
 from datetime import datetime
 from werkzeug.utils import secure_filename
+from openssl_improved import handle_openssl_command, setup_openssl_environment
 
 # Create a logger
 logger = logging.getLogger("terminal_command_handler")
@@ -59,15 +60,25 @@ class TerminalCommandHandler:
         # Check for built-in file operations first and handle them directly
         file_op_result = self._handle_file_operations(command, home_dir, callback)
         if file_op_result is not None:
-            return file_op_result
+            # Check if we just need to modify the command and continue
+            if file_op_result.get("modified_command"):
+                command = file_op_result["modified_command"]
+                # If environment variables are provided, use them
+                custom_env = file_op_result.get("env")
+                if custom_env:
+                    env = custom_env
+            else:
+                # Otherwise return the result directly
+                return file_op_result
             
         # Add environment variables to help user-level installations
-        env = os.environ.copy()
+        env = os.environ.copy() if not locals().get('env') else env
         env['HOME'] = home_dir
         env['PYTHONUSERBASE'] = os.path.join(home_dir, '.local')
         env['PATH'] = os.path.join(home_dir, '.local', 'bin') + ':' + env.get('PATH', '')
         env['USER'] = 'terminal-user'  # Provide a username for commands that need it
         env['TERM'] = 'xterm-256color'  # Standard terminal type
+        env['OPENSSL_PASSPHRASE'] = 'termux_secure_passphrase'  # Default passphrase for OpenSSL
         
         # Source .profile instead of just .bashrc to get all environment variables
         profile_path = os.path.join(home_dir, '.profile')
@@ -235,6 +246,13 @@ class TerminalCommandHandler:
             Dict with operation result if command is a file operation, None otherwise
         """
         command = command.strip()
+        
+        # Special handling for OpenSSL commands
+        openssl_result = handle_openssl_command(command, home_dir, callback)
+        if openssl_result:
+            if "command" in openssl_result:
+                # Just modify the command and let it execute normally
+                return {"modified_command": openssl_result["command"], "env": openssl_result.get("env")}
         
         # Check if this is an enhanced file operation command that needs special handling
         if command.startswith("ls") or command.startswith("pwd") or command.startswith("cd"):
