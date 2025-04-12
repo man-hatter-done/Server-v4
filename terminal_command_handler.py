@@ -556,5 +556,115 @@ class TerminalCommandHandler:
                     return {"message": "Touch completed", "exit_code": 0}
                 return {"output": "", "exit_code": 0}
         
+        # grep - Search files for patterns
+        if command.startswith("grep "):
+            parts = command.split(" ", 1)
+            if len(parts) < 2:
+                return {"error": "Usage: grep [OPTIONS] PATTERN [FILE...]", "exit_code": 1}
+            
+            # This is a simplified implementation - a real solution would parse all grep options
+            args = parts[1].strip()
+            
+            # Process all arguments
+            pattern = None
+            files = []
+            is_pattern = True
+            
+            # Very simple arg parser - this doesn't handle all grep options
+            for arg in args.split():
+                if arg.startswith('-'):
+                    # This is an option, skip it for now
+                    continue
+                elif is_pattern and pattern is None:
+                    pattern = arg
+                    is_pattern = False
+                else:
+                    files.append(arg)
+            
+            if not pattern:
+                return {"error": "No pattern specified", "exit_code": 1}
+            
+            if not files:
+                # No files specified, let the shell handle it (might be piped input)
+                return None
+            
+            # Process each file
+            results = []
+            found_matches = False
+            
+            for file_path in files:
+                # Handle ~ in paths
+                if file_path.startswith("~"):
+                    file_path = file_path.replace("~", home_dir, 1)
+                elif not file_path.startswith("/"):
+                    # Relative path
+                    file_path = os.path.join(home_dir, file_path)
+                
+                # Verify the path is within the home directory for security
+                file_path = os.path.normpath(file_path)
+                if not file_path.startswith(home_dir):
+                    results.append(f"grep: {file_path}: Access denied. Path outside of user directory.")
+                    continue
+                    
+                try:
+                    if not os.path.exists(file_path):
+                        results.append(f"grep: {file_path}: No such file or directory")
+                        continue
+                        
+                    if os.path.isdir(file_path):
+                        results.append(f"grep: {file_path}: Is a directory")
+                        continue
+                    
+                    # Read the file and grep for the pattern
+                    with open(file_path, 'r', errors='replace') as f:
+                        for i, line in enumerate(f):
+                            if pattern in line:
+                                found_matches = True
+                                # If multiple files, prefix output with filename
+                                if len(files) > 1:
+                                    results.append(f"{os.path.basename(file_path)}:{line.rstrip()}")
+                                else:
+                                    results.append(line.rstrip())
+                except Exception as e:
+                    results.append(f"grep: {file_path}: {str(e)}")
+            
+            # Return the results
+            if results:
+                result_text = "\n".join(results)
+                exit_code = 0 if found_matches else 1
+                
+                if callback:
+                    callback(result_text + "\n")
+                    callback("\n", exit_code=exit_code)
+                    return {"message": "Grep completed", "exit_code": exit_code}
+                return {"output": result_text, "exit_code": exit_code}
+            else:
+                # No matches found
+                exit_code = 1
+                if callback:
+                    callback("\n", exit_code=exit_code)
+                    return {"message": "No matches found", "exit_code": exit_code}
+                return {"output": "", "exit_code": exit_code}
+
+        # find - Search for files in a directory hierarchy
+        if command.startswith("find "):
+            # For find command, we'll let the shell handle it as it's more complex
+            # Just performing a security check on the path
+            parts = command.split(" ", 2)
+            if len(parts) >= 2:
+                path = parts[1].strip()
+                
+                # Handle ~ in paths
+                if path.startswith("~"):
+                    path = path.replace("~", home_dir, 1)
+                elif not path.startswith("/"):
+                    # Relative path
+                    path = os.path.join(home_dir, path)
+                
+                # Verify the path is within the home directory for security
+                path = os.path.normpath(path)
+                if not path.startswith(home_dir):
+                    return {"error": f"find: {path}: Access denied. Path outside of user directory.", "exit_code": 1}
+
         # If not a built-in file operation, return None to execute as a normal shell command
         return None
