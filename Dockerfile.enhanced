@@ -1,0 +1,30 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p user_data logs
+
+# Ensure scripts are executable
+RUN chmod +x run_enhanced_server.py
+RUN chmod +x entrypoint.sh
+
+# Set environment variables
+ENV PORT=3000
+ENV DEBUG=false
+ENV SESSION_TIMEOUT=3600
+ENV USER_DATA_DIR=user_data
+ENV SCRIPT_DIR=user_scripts
+
+# Expose port
+EXPOSE 3000
+
+# Run the server
+CMD ["python", "run_enhanced_server.py"]

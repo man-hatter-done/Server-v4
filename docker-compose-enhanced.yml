@@ -1,0 +1,19 @@
+version: '3'
+
+services:
+  terminal-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.enhanced
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DEBUG=false
+      - SESSION_TIMEOUT=3600
+      - USER_DATA_DIR=user_data
+      - SCRIPT_DIR=user_scripts
+    volumes:
+      - ./user_data:/app/user_data
+      - ./logs:/app/logs
+    restart: unless-stopped
